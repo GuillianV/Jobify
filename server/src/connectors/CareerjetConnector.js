@@ -100,12 +100,13 @@ class CareerjetConnector extends JobConnector {
    * @returns {JobOffer} The canonical offer.
    */
   mapOffer(raw) {
-    const contractText = [raw.title, raw.description].join(TITLE_DESCRIPTION_SEPARATOR);
+    const description = TextNormalizer.htmlToPlainText(raw.description);
+    const contractText = [raw.title, description].join(TITLE_DESCRIPTION_SEPARATOR);
     return new JobOffer({
       source: JobSource.CAREERJET,
       sourceId: raw.url,
       title: raw.title,
-      description: raw.description ?? null,
+      description,
       company: new Company({ name: raw.company ?? null }),
       location: new JobLocation({
         label: raw.locations ?? null,

@@ -8,6 +8,7 @@ import { HttpStatus } from "../constants/HttpStatus.js";
 import { FranceTravailConstants } from "../constants/FranceTravailConstants.js";
 import { ContractTypeNormalizer } from "../normalization/ContractTypeNormalizer.js";
 import { DateNormalizer } from "../normalization/DateNormalizer.js";
+import { TextNormalizer } from "../normalization/TextNormalizer.js";
 
 const CITY_SEPARATOR = " - ";
 const CITY_PART_INDEX = 1;
@@ -123,13 +124,14 @@ class FranceTravailConnector extends JobConnector {
     const employer = raw.entreprise ?? {};
     const origin = raw.origineOffre ?? {};
     const pay = raw.salaire ?? {};
+    const description = TextNormalizer.htmlToPlainText(raw.description);
     const labelParts = (place.libelle ?? "").split(CITY_SEPARATOR);
     const city = labelParts.length > CITY_PART_INDEX ? labelParts[CITY_PART_INDEX].trim() : null;
     return new JobOffer({
       source: JobSource.FRANCE_TRAVAIL,
       sourceId: raw.id,
       title: raw.intitule,
-      description: raw.description ?? null,
+      description,
       company: new Company({
         name: employer.nom ?? null,
         description: employer.description ?? null,
