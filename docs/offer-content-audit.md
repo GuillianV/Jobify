@@ -11,7 +11,7 @@ Les audits visaient à déterminer, fournisseur par fournisseur :
 - les données perdues lors du mapping vers `JobOffer` ;
 - les limites d'identité, de déduplication et de persistance du pipeline actuel.
 
-**Date de synthèse :** 9 août 2026  
+**Date de synthèse :** 9 août 2026<br>
 **Commit des outils d'audit :** `f6b9331`
 
 Les chiffres ci-dessous proviennent des exécutions d'audit réalisées. Les rapports JSON complets et les descriptions intégrales ne sont pas reproduits ici.
