@@ -1,7 +1,11 @@
 import { TextNormalizer } from "../normalization/TextNormalizer.js";
 import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
+import { JobSource } from "../constants/JobSource.js";
+import { OfferContentAcquisition } from "../constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../constants/OfferContentCompleteness.js";
 import { Company } from "./Company.js";
 import { JobLocation } from "./JobLocation.js";
+import { OfferContent } from "./OfferContent.js";
 import { Salary } from "./Salary.js";
 
 const KEY_SEPARATOR = "|";
@@ -21,6 +25,7 @@ class JobOffer {
    * @param {boolean} [params.surrogateMatchable] - Whether the surrogate can match observations.
    * @param {string} params.title - Job title.
    * @param {string|null} [params.description] - Full description.
+   * @param {OfferContent|object|null} [params.offerContent] - Trusted persistent content.
    * @param {import("./Company.js").Company} params.company - Hiring company.
    * @param {import("./JobLocation.js").JobLocation} params.location - Location.
    * @param {string} [params.contractType] - Canonical contract type (ContractType).
@@ -39,6 +44,7 @@ class JobOffer {
     surrogateMatchable = false,
     title,
     description = null,
+    offerContent = null,
     company,
     location,
     contractType,
@@ -58,7 +64,11 @@ class JobOffer {
     this.surrogateKey = surrogateKey;
     this.surrogateMatchable = surrogateMatchable;
     this.title = title;
-    this.description = description;
+    this.offerContent = offerContent instanceof OfferContent
+      ? offerContent
+      : offerContent
+        ? OfferContent.fromPersistence(offerContent)
+        : JobOffer.buildLegacyOfferContent(source, description);
     this.company = company;
     this.location = location;
     this.contractType = contractType;
@@ -101,13 +111,60 @@ class JobOffer {
    */
   static fromPersistence(id, payload) {
     const offer = JobOffer.fromJson(payload);
+    const hasPersistentContent = Object.hasOwn(payload, "offerContent");
     return new JobOffer({
       ...offer,
       id,
       identityKind: payload.identityKind ?? OfferIdentityKind.STABLE,
       surrogateKey: payload.surrogateKey ?? null,
       surrogateMatchable: payload.surrogateMatchable ?? false,
+      offerContent: hasPersistentContent
+        ? OfferContent.fromPersistence(payload.offerContent)
+        : JobOffer.buildLegacyOfferContent(payload.source, payload.description),
     });
+  }
+
+  /**
+   * Adapt a historical provider description into trusted in-memory content.
+   * @param {string} source - Provider source.
+   * @param {unknown} description - Historical provider description.
+   * @returns {OfferContent} Backward-compatible content.
+   */
+  static buildLegacyOfferContent(source, description) {
+    if (!OfferContent.hasUsefulText(description)) {
+      return new OfferContent();
+    }
+    return new OfferContent({
+      automaticText: {
+        value: description,
+        acquisition: OfferContentAcquisition.SEARCH,
+        retrievedAt: null,
+        completeness: JobOffer.getLegacyCompleteness(source),
+      },
+    });
+  }
+
+  /**
+   * Resolve the demonstrated completeness policy for historical descriptions.
+   * @param {string} source - Provider source.
+   * @returns {string} Technical completeness level.
+   */
+  static getLegacyCompleteness(source) {
+    if (source === JobSource.FRANCE_TRAVAIL) {
+      return OfferContentCompleteness.PROVIDER_FULL;
+    }
+    if (source === JobSource.ADZUNA || source === JobSource.CAREERJET) {
+      return OfferContentCompleteness.KNOWN_TRUNCATED;
+    }
+    return OfferContentCompleteness.UNKNOWN;
+  }
+
+  /**
+   * Return the historical public provider description projection.
+   * @returns {string|null} The automatic provider text or null.
+   */
+  get description() {
+    return this.offerContent.getAutomaticText();
   }
 
   /**
@@ -156,6 +213,17 @@ class JobOffer {
       applyUrl: this.applyUrl,
       publishedAt: this.publishedAt,
       alternates: this.alternates,
+    };
+  }
+
+  /**
+   * Serialize the complete trusted observation for SQLite persistence.
+   * @returns {object} The persistent observation payload without SQLite id.
+   */
+  toPersistenceJson() {
+    return {
+      ...this.toJson(),
+      offerContent: this.offerContent.toPersistenceJson(),
     };
   }
 }

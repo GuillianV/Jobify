@@ -7,9 +7,12 @@ import { JobSource } from "../constants/JobSource.js";
 import { HttpStatus } from "../constants/HttpStatus.js";
 import { FranceTravailConstants } from "../constants/FranceTravailConstants.js";
 import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
+import { OfferContentAcquisition } from "../constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../constants/OfferContentCompleteness.js";
 import { ContractTypeNormalizer } from "../normalization/ContractTypeNormalizer.js";
 import { DateNormalizer } from "../normalization/DateNormalizer.js";
 import { TextNormalizer } from "../normalization/TextNormalizer.js";
+import { OfferContent } from "../models/OfferContent.js";
 
 const CITY_SEPARATOR = " - ";
 const CITY_PART_INDEX = 1;
@@ -110,17 +113,19 @@ class FranceTravailConnector extends JobConnector {
     }
     const payload = await response.json();
     const results = payload.resultats ?? [];
+    const retrievedAt = new Date().toISOString();
     return results.map((raw) => {
-      return this.mapOffer(raw);
+      return this.mapOffer(raw, retrievedAt);
     });
   }
 
   /**
    * Map a single raw France Travail offer to the canonical JobOffer model.
    * @param {object} raw - The raw offer object from the API.
+   * @param {string} [retrievedAt] - Shared provider response timestamp.
    * @returns {JobOffer} The canonical offer.
    */
-  mapOffer(raw) {
+  mapOffer(raw, retrievedAt = new Date().toISOString()) {
     const place = raw.lieuTravail ?? {};
     const employer = raw.entreprise ?? {};
     const origin = raw.origineOffre ?? {};
@@ -133,7 +138,14 @@ class FranceTravailConnector extends JobConnector {
       sourceId: raw.id,
       identityKind: OfferIdentityKind.STABLE,
       title: raw.intitule,
-      description,
+      offerContent: new OfferContent({
+        automaticText: {
+          value: description,
+          acquisition: OfferContentAcquisition.SEARCH,
+          retrievedAt,
+          completeness: OfferContentCompleteness.PROVIDER_FULL,
+        },
+      }),
       company: new Company({
         name: employer.nom ?? null,
         description: employer.description ?? null,

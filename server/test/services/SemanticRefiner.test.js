@@ -8,6 +8,9 @@ import { Company } from "../../src/models/Company.js";
 import { JobLocation } from "../../src/models/JobLocation.js";
 import { Salary } from "../../src/models/Salary.js";
 import { JobSource } from "../../src/constants/JobSource.js";
+import { OfferContent } from "../../src/models/OfferContent.js";
+import { OfferContentAcquisition } from "../../src/constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../../src/constants/OfferContentCompleteness.js";
 
 const LONG_DESCRIPTION_LENGTH = 500;
 const SHORT_DESCRIPTION_LENGTH = 20;
@@ -18,6 +21,7 @@ const HELLOWORK_INDEX = 8;
 const OFFER_ARRAY_LENGTH = 9;
 const TWO_ALTERNATES = 2;
 const THIRD_GROUP_INDEX = 2;
+const RETRIEVED_AT = "2026-08-01T10:00:00.000Z";
 
 /**
  * Build an offer for semantic representative tests.
@@ -152,4 +156,32 @@ test("semantic snippets remain bounded by the configured limit", () => {
     refiner.buildSnippet(description).length,
     GroqConstants.DESCRIPTION_SNIPPET_LENGTH,
   );
+});
+
+test("semantic prompt uses only bounded automatic description and hides full OfferContent", () => {
+  const refiner = createRefiner();
+  const automaticValue = "a".repeat(LONG_DESCRIPTION_LENGTH);
+  const offer = new JobOffer({
+    source: JobSource.ADZUNA,
+    sourceId: "adzuna-content",
+    title: "Developer",
+    company: new Company({ name: "Example" }),
+    location: new JobLocation({ city: "Annecy" }),
+    salary: new Salary({}),
+    offerContent: new OfferContent({
+      automaticText: {
+        value: automaticValue,
+        acquisition: OfferContentAcquisition.SEARCH,
+        retrievedAt: RETRIEVED_AT,
+        completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+      },
+      userText: { value: "Private user text", providedAt: RETRIEVED_AT },
+    }),
+  });
+  const prompt = refiner.buildUserPrompt([offer], { keywords: "Developer" });
+
+  assert.equal(prompt.includes(automaticValue), false);
+  assert.equal(prompt.includes("a".repeat(GroqConstants.DESCRIPTION_SNIPPET_LENGTH)), true);
+  assert.equal(prompt.includes("Private user text"), false);
+  assert.equal(prompt.includes("offerContent"), false);
 });

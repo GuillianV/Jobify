@@ -6,10 +6,13 @@ import { Salary } from "../models/Salary.js";
 import { JobSource } from "../constants/JobSource.js";
 import { CareerjetConstants } from "../constants/CareerjetConstants.js";
 import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
+import { OfferContentAcquisition } from "../constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../constants/OfferContentCompleteness.js";
 import { CareerjetSurrogateIdentity } from "../identity/CareerjetSurrogateIdentity.js";
 import { TextNormalizer } from "../normalization/TextNormalizer.js";
 import { ContractTypeNormalizer } from "../normalization/ContractTypeNormalizer.js";
 import { DateNormalizer } from "../normalization/DateNormalizer.js";
+import { OfferContent } from "../models/OfferContent.js";
 
 const COUNTRY_FRANCE = "France";
 const CITY_SEPARATOR = ",";
@@ -79,8 +82,9 @@ class CareerjetConnector extends JobConnector {
       throw new Error(`Careerjet returned an error: ${payload.error}`);
     }
     const jobs = payload.jobs ?? [];
+    const retrievedAt = new Date().toISOString();
     return jobs.map((raw) => {
-      return this.mapOffer(raw);
+      return this.mapOffer(raw, retrievedAt);
     });
   }
 
@@ -99,9 +103,10 @@ class CareerjetConnector extends JobConnector {
   /**
    * Map a single raw Careerjet offer to the canonical JobOffer model.
    * @param {object} raw - The raw offer object from the API.
+   * @param {string} [retrievedAt] - Shared provider response timestamp.
    * @returns {JobOffer} The canonical offer.
    */
-  mapOffer(raw) {
+  mapOffer(raw, retrievedAt = new Date().toISOString()) {
     const description = TextNormalizer.htmlToPlainText(raw.description);
     const contractText = [raw.title, description].join(TITLE_DESCRIPTION_SEPARATOR);
     const city = this.extractCity(raw.locations);
@@ -121,7 +126,14 @@ class CareerjetConnector extends JobConnector {
       surrogateKey: surrogate.surrogateKey,
       surrogateMatchable: surrogate.surrogateMatchable,
       title: raw.title,
-      description,
+      offerContent: new OfferContent({
+        automaticText: {
+          value: description,
+          acquisition: OfferContentAcquisition.SEARCH,
+          retrievedAt,
+          completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+        },
+      }),
       company: new Company({ name: raw.company ?? null }),
       location: new JobLocation({
         label: raw.locations ?? null,

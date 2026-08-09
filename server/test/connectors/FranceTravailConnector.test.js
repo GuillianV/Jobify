@@ -4,8 +4,11 @@ import { FranceTravailConnector } from "../../src/connectors/FranceTravailConnec
 import { ContractType } from "../../src/constants/ContractType.js";
 import { JobSource } from "../../src/constants/JobSource.js";
 import { OfferIdentityKind } from "../../src/constants/OfferIdentityKind.js";
+import { OfferContentAcquisition } from "../../src/constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../../src/constants/OfferContentCompleteness.js";
 
 const EMPLOYER_DESCRIPTION = "<b>Description entreprise conservée</b>";
+const RETRIEVED_AT = "2026-08-03T10:00:00.000Z";
 const RAW_OFFER = Object.freeze({
   id: "france-travail-offer",
   intitule: "Développeur backend",
@@ -40,7 +43,7 @@ test("mapOffer cleans France Travail descriptions and preserves structured field
     clientSecret: "test-secret",
     scope: "test-scope",
   });
-  const offer = connector.mapOffer(RAW_OFFER);
+  const offer = connector.mapOffer(RAW_OFFER, RETRIEVED_AT);
   const json = offer.toJson();
 
   assert.equal(offer.description, "Mission Node.js & API\n\nÉquipe");
@@ -57,6 +60,14 @@ test("mapOffer cleans France Travail descriptions and preserves structured field
   assert.equal(json.location.city, "Annecy");
   assert.equal(json.applyUrl, RAW_OFFER.origineOffre.urlOrigine);
   assert.equal(json.publishedAt, "2026-08-02T09:30:00.000Z");
+  assert.equal(offer.offerContent.automaticText.acquisition, OfferContentAcquisition.SEARCH);
+  assert.equal(
+    offer.offerContent.automaticText.completeness,
+    OfferContentCompleteness.PROVIDER_FULL,
+  );
+  assert.equal(offer.offerContent.automaticText.retrievedAt, RETRIEVED_AT);
+  assert.equal(offer.offerContent.userText, null);
+  assert.equal(offer.offerContent.structured, null);
 });
 
 test("mapOffer preserves a null France Travail description", () => {

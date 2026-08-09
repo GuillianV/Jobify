@@ -9,6 +9,9 @@ import { Salary } from "../../src/models/Salary.js";
 import { JobSource } from "../../src/constants/JobSource.js";
 import { OfferIdentityKind } from "../../src/constants/OfferIdentityKind.js";
 import { CareerjetSurrogateIdentity } from "../../src/identity/CareerjetSurrogateIdentity.js";
+import { OfferContent } from "../../src/models/OfferContent.js";
+import { OfferContentAcquisition } from "../../src/constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../../src/constants/OfferContentCompleteness.js";
 
 const FIRST_SEEN = "2026-08-01T10:00:00.000Z";
 const LAST_SEEN = "2026-08-02T10:00:00.000Z";
@@ -117,6 +120,23 @@ function createOffer(overrides = {}) {
     publishedAt: FIRST_SEEN,
     applyUrl: "https://example.com/first",
     ...overrides,
+  });
+}
+
+/**
+ * Build provider content for repository merge scenarios.
+ * @param {object} [overrides] - Values replacing the automatic text defaults.
+ * @returns {OfferContent} Test content.
+ */
+function createContent(overrides = {}) {
+  return new OfferContent({
+    automaticText: {
+      value: "Provider text",
+      acquisition: OfferContentAcquisition.SEARCH,
+      retrievedAt: FIRST_SEEN,
+      completeness: OfferContentCompleteness.UNKNOWN,
+      ...overrides,
+    },
   });
 }
 
@@ -286,6 +306,33 @@ test("Careerjet updates one unique match despite a rotated URL", () => {
   assert.equal(updated.sourceId, "https://example.com/careerjet/rotated");
   assert.equal(row.first_seen_at, FIRST_SEEN);
   assert.equal(row.last_seen_at, LAST_SEEN);
+  connection.close();
+});
+
+test("Careerjet unique surrogate update preserves richer OfferContent", () => {
+  const { connection, repository } = createRepository();
+  const inserted = repository.upsertOne(createCareerjetOffer({
+    offerContent: createContent({
+      completeness: OfferContentCompleteness.PROVIDER_FULL,
+    }),
+  }), FIRST_SEEN);
+  const updated = repository.upsertOne(createCareerjetOffer({
+    sourceId: "https://example.com/careerjet/rotated-content",
+    offerContent: createContent({
+      retrievedAt: LAST_SEEN,
+      completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+    }),
+  }), LAST_SEEN);
+  const row = connection.prepare("SELECT * FROM offers WHERE id = ?").get(inserted.id);
+
+  assert.equal(updated.id, inserted.id);
+  assert.equal(
+    updated.offerContent.automaticText.completeness,
+    OfferContentCompleteness.PROVIDER_FULL,
+  );
+  assert.equal(row.first_seen_at, FIRST_SEEN);
+  assert.equal(row.last_seen_at, LAST_SEEN);
+  assert.equal(connection.prepare("SELECT COUNT(*) count FROM offers").get().count, 1);
   connection.close();
 });
 
@@ -478,5 +525,108 @@ test("repository hydration uses SQLite identity columns over the payload", () =>
 
   assert.equal(hydrated.id, inserted.id);
   assert.equal(hydrated.sourceId, inserted.sourceId);
+  connection.close();
+});
+
+test("repository inserts persistent OfferContent without exposing SQLite id in payload", () => {
+  const { connection, repository } = createRepository();
+  const persisted = repository.upsertOne(createOffer({
+    offerContent: createContent({ value: "Inserted text" }),
+  }), FIRST_SEEN);
+  const row = connection.prepare("SELECT payload FROM offers WHERE id = ?").get(persisted.id);
+  const payload = JSON.parse(row.payload);
+
+  assert.equal(payload.offerContent.automaticText.value, "Inserted text");
+  assert.equal(payload.description, "Inserted text");
+  assert.equal(payload.id, undefined);
+  connection.close();
+});
+
+test("repository preserves richer text from a newer poorer observation", () => {
+  const { connection, repository } = createRepository();
+  const inserted = repository.upsertOne(createOffer({
+    offerContent: createContent({
+      value: "Full text",
+      completeness: OfferContentCompleteness.PROVIDER_FULL,
+    }),
+  }), FIRST_SEEN);
+  const updated = repository.upsertOne(createOffer({
+    title: "Updated title",
+    offerContent: createContent({
+      value: "New truncated text",
+      retrievedAt: LAST_SEEN,
+      completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+    }),
+  }), LAST_SEEN);
+  const row = connection.prepare("SELECT * FROM offers WHERE id = ?").get(inserted.id);
+
+  assert.equal(updated.id, inserted.id);
+  assert.equal(updated.title, "Updated title");
+  assert.equal(updated.description, "Full text");
+  assert.equal(row.first_seen_at, FIRST_SEEN);
+  assert.equal(row.last_seen_at, LAST_SEEN);
+  connection.close();
+});
+
+test("repository adopts richer text from a poorer persisted observation", () => {
+  const { connection, repository } = createRepository();
+  const inserted = repository.upsertOne(createOffer({
+    offerContent: createContent({
+      value: "Truncated text",
+      completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+    }),
+  }), FIRST_SEEN);
+  const updated = repository.upsertOne(createOffer({
+    offerContent: createContent({
+      value: "Full text",
+      retrievedAt: LAST_SEEN,
+      completeness: OfferContentCompleteness.PROVIDER_FULL,
+    }),
+  }), LAST_SEEN);
+
+  assert.equal(updated.id, inserted.id);
+  assert.equal(updated.description, "Full text");
+  connection.close();
+});
+
+test("repository applies freshness at equal rank and rejects empty incoming text", () => {
+  const { connection, repository } = createRepository();
+  const inserted = repository.upsertOne(createOffer({
+    offerContent: createContent({ value: "First text" }),
+  }), FIRST_SEEN);
+  const newer = repository.upsertOne(createOffer({
+    offerContent: createContent({ value: "Second text", retrievedAt: LAST_SEEN }),
+  }), LAST_SEEN);
+  const empty = repository.upsertOne(createOffer({
+    offerContent: createContent({ value: " ", retrievedAt: NEXT_SEEN }),
+  }), NEXT_SEEN);
+
+  assert.equal(newer.description, "Second text");
+  assert.equal(empty.description, "Second text");
+  assert.equal(empty.id, inserted.id);
+  connection.close();
+});
+
+test("reading a legacy payload hydrates content without rewriting the row", () => {
+  const { connection, repository } = createRepository();
+  const inserted = repository.upsertOne(createOffer(), FIRST_SEEN);
+  const row = connection.prepare("SELECT payload FROM offers WHERE id = ?").get(inserted.id);
+  const legacyPayload = JSON.parse(row.payload);
+  delete legacyPayload.offerContent;
+  const serializedLegacy = JSON.stringify(legacyPayload);
+  connection.prepare("UPDATE offers SET payload = ? WHERE id = ?").run(
+    serializedLegacy,
+    inserted.id,
+  );
+
+  const hydrated = repository.findById(inserted.id);
+  const afterRead = connection.prepare("SELECT payload FROM offers WHERE id = ?").get(inserted.id);
+
+  assert.equal(hydrated.description, legacyPayload.description);
+  assert.equal(
+    hydrated.offerContent.automaticText.completeness,
+    OfferContentCompleteness.KNOWN_TRUNCATED,
+  );
+  assert.equal(afterRead.payload, serializedLegacy);
   connection.close();
 });

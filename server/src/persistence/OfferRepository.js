@@ -298,7 +298,12 @@ class OfferRepository {
    * @returns {import("../models/JobOffer.js").JobOffer} Persisted observation.
    */
   update(existing, offer, now) {
-    const payload = this.serialize(offer);
+    const existingOffer = this.hydrateRow(existing);
+    const mergedOffer = new JobOffer({
+      ...offer,
+      offerContent: existingOffer.offerContent.merge(offer.offerContent),
+    });
+    const payload = this.serialize(mergedOffer);
     this.updateStatement.run(
       offer.sourceId ?? null,
       offer.surrogateKey ?? null,
@@ -320,6 +325,15 @@ class OfferRepository {
     if (!row) {
       return null;
     }
+    return this.hydrateRow(row);
+  }
+
+  /**
+   * Hydrate one SQLite row using its columns as identity authority.
+   * @param {object} row - SQLite offer row.
+   * @returns {import("../models/JobOffer.js").JobOffer} Hydrated observation.
+   */
+  hydrateRow(row) {
     const payload = JSON.parse(row.payload);
     payload.source = row.source;
     payload.sourceId = row.source_id;
@@ -334,7 +348,7 @@ class OfferRepository {
    * @returns {string} JSON payload.
    */
   serialize(offer) {
-    const payload = offer.toJson();
+    const payload = offer.toPersistenceJson();
     delete payload.id;
     return JSON.stringify(payload);
   }

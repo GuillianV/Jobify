@@ -8,8 +8,11 @@ import { SalaryPeriod } from "../constants/SalaryPeriod.js";
 import { ContractType } from "../constants/ContractType.js";
 import { AdzunaConstants } from "../constants/AdzunaConstants.js";
 import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
+import { OfferContentAcquisition } from "../constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../constants/OfferContentCompleteness.js";
 import { ContractTypeNormalizer } from "../normalization/ContractTypeNormalizer.js";
 import { DateNormalizer } from "../normalization/DateNormalizer.js";
+import { OfferContent } from "../models/OfferContent.js";
 
 const COUNTRY_FRANCE = "France";
 const LAST_AREA_OFFSET = 1;
@@ -70,8 +73,9 @@ class AdzunaConnector extends JobConnector {
     }
     const payload = await response.json();
     const results = payload.results ?? [];
+    const retrievedAt = new Date().toISOString();
     return results.map((raw) => {
-      return this.mapOffer(raw);
+      return this.mapOffer(raw, retrievedAt);
     });
   }
 
@@ -122,9 +126,10 @@ class AdzunaConnector extends JobConnector {
   /**
    * Map a single raw Adzuna offer to the canonical JobOffer model.
    * @param {object} raw - The raw offer object from the API.
+   * @param {string} [retrievedAt] - Shared provider response timestamp.
    * @returns {JobOffer} The canonical offer.
    */
-  mapOffer(raw) {
+  mapOffer(raw, retrievedAt = new Date().toISOString()) {
     const location = raw.location ?? {};
     const company = raw.company ?? {};
     return new JobOffer({
@@ -132,7 +137,14 @@ class AdzunaConnector extends JobConnector {
       sourceId: String(raw.id),
       identityKind: OfferIdentityKind.STABLE,
       title: raw.title,
-      description: raw.description ?? null,
+      offerContent: new OfferContent({
+        automaticText: {
+          value: raw.description ?? null,
+          acquisition: OfferContentAcquisition.SEARCH,
+          retrievedAt,
+          completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+        },
+      }),
       company: new Company({ name: company.display_name ?? null }),
       location: new JobLocation({
         label: location.display_name ?? null,

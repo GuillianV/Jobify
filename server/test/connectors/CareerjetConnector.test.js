@@ -4,6 +4,10 @@ import { CareerjetConnector } from "../../src/connectors/CareerjetConnector.js";
 import { ContractType } from "../../src/constants/ContractType.js";
 import { JobSource } from "../../src/constants/JobSource.js";
 import { OfferIdentityKind } from "../../src/constants/OfferIdentityKind.js";
+import { OfferContentAcquisition } from "../../src/constants/OfferContentAcquisition.js";
+import { OfferContentCompleteness } from "../../src/constants/OfferContentCompleteness.js";
+
+const RETRIEVED_AT = "2026-08-03T10:00:00.000Z";
 
 const RAW_OFFER = Object.freeze({
   title: "Développeur backend",
@@ -17,7 +21,7 @@ const RAW_OFFER = Object.freeze({
 
 test("mapOffer cleans Careerjet descriptions and preserves essential fields", () => {
   const connector = new CareerjetConnector({ affid: "test-affiliate" });
-  const offer = connector.mapOffer(RAW_OFFER);
+  const offer = connector.mapOffer(RAW_OFFER, RETRIEVED_AT);
   const json = offer.toJson();
 
   assert.equal(offer.description, "Node.js");
@@ -33,6 +37,13 @@ test("mapOffer cleans Careerjet descriptions and preserves essential fields", ()
   assert.equal(json.applyUrl, RAW_OFFER.url);
   assert.equal(json.publishedAt, "2026-08-01T10:00:00.000Z");
   assert.equal(json.salary.raw, RAW_OFFER.salary);
+  assert.equal(offer.offerContent.automaticText.acquisition, OfferContentAcquisition.SEARCH);
+  assert.equal(
+    offer.offerContent.automaticText.completeness,
+    OfferContentCompleteness.KNOWN_TRUNCATED,
+  );
+  assert.equal(offer.offerContent.automaticText.retrievedAt, RETRIEVED_AT);
+  assert.equal(offer.offerContent.structured, null);
 });
 
 test("mapOffer builds a deterministic surrogate independent of Careerjet URLs", () => {
