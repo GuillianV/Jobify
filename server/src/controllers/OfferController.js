@@ -10,13 +10,11 @@ class OfferController {
    * Create the controller with its dependencies.
    * @param {import("../services/OfferSearchService.js").OfferSearchService} offerSearchService - Search service.
    * @param {import("../services/CommuneResolver.js").CommuneResolver} communeResolver - City to INSEE resolver.
-   * @param {import("../persistence/OfferRepository.js").OfferRepository} offerRepository - Offer store.
    * @param {import("../views/JsonView.js").JsonView} view - JSON view.
    */
-  constructor(offerSearchService, communeResolver, offerRepository, view) {
+  constructor(offerSearchService, communeResolver, view) {
     this.offerSearchService = offerSearchService;
     this.communeResolver = communeResolver;
-    this.offerRepository = offerRepository;
     this.view = view;
   }
 
@@ -71,7 +69,6 @@ class OfferController {
       const criteria = await this.buildCriteria(request);
       const injectedOffers = this.reconstructScrapedOffers(request.body?.scrapedOffers);
       const offers = await this.offerSearchService.search(criteria, injectedOffers);
-      this.offerRepository.upsertMany(offers);
       this.view.renderSuccess(response, {
         count: offers.length,
         offres: offers.map((offer) => {

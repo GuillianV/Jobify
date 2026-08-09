@@ -11,10 +11,14 @@ class OfferSearchService {
    * refiner (dedup + relevance) applied after the exact deduplication.
    * @param {import("../connectors/JobConnector.js").JobConnector[]} connectors - Connectors.
    * @param {import("./SemanticRefiner.js").SemanticRefiner} semanticRefiner - Semantic refiner.
+   * @param {import("../persistence/OfferRepository.js").OfferRepository} offerRepository - Offer store.
+   * @param {import("./OfferRepresentativePolicy.js").getEligibleRepresentatives} getEligibleRepresentatives - Representative eligibility policy.
    */
-  constructor(connectors, semanticRefiner) {
+  constructor(connectors, semanticRefiner, offerRepository, getEligibleRepresentatives) {
     this.connectors = connectors;
     this.semanticRefiner = semanticRefiner;
+    this.offerRepository = offerRepository;
+    this.getEligibleRepresentatives = getEligibleRepresentatives;
   }
 
   /**
@@ -35,9 +39,10 @@ class OfferSearchService {
       }),
     );
     const merged = [...batches.flat(), ...injectedOffers];
-    const unique = this.deduplicate(merged);
-    const recent = this.filterByRecency(unique);
-    const refined = await this.semanticRefiner.refine(recent, criteria);
+    const recent = this.filterByRecency(merged);
+    const persisted = this.offerRepository.upsertMany(recent);
+    const unique = this.deduplicate(persisted);
+    const refined = await this.semanticRefiner.refine(unique, criteria);
     return this.sortByRecency(refined);
   }
 
@@ -106,14 +111,17 @@ class OfferSearchService {
    * @returns {import("../models/JobOffer.js").JobOffer[]} The unique offers.
    */
   deduplicate(offers) {
-    const uniqueByKey = new Map();
+    const groupsByKey = new Map();
     for (const offer of offers) {
       const key = offer.getDeduplicationKey();
-      if (!uniqueByKey.has(key)) {
-        uniqueByKey.set(key, offer);
+      if (!groupsByKey.has(key)) {
+        groupsByKey.set(key, []);
       }
+      groupsByKey.get(key).push(offer);
     }
-    return [...uniqueByKey.values()];
+    return [...groupsByKey.values()].map((candidates) => {
+      return this.getEligibleRepresentatives(candidates)[0];
+    });
   }
 }
 

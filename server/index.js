@@ -8,6 +8,7 @@ import { AdzunaConnector } from "./src/connectors/AdzunaConnector.js";
 import { CareerjetConnector } from "./src/connectors/CareerjetConnector.js";
 import { OfferSearchService } from "./src/services/OfferSearchService.js";
 import { SemanticRefiner } from "./src/services/SemanticRefiner.js";
+import { getEligibleRepresentatives } from "./src/services/OfferRepresentativePolicy.js";
 import { CommuneResolver } from "./src/services/CommuneResolver.js";
 import { Database } from "./src/persistence/Database.js";
 import { OfferRepository } from "./src/persistence/OfferRepository.js";
@@ -33,13 +34,17 @@ const connectors = [
   new AdzunaConnector(config.adzuna),
   new CareerjetConnector(config.careerjet),
 ];
-const semanticRefiner = new SemanticRefiner(config.groq);
-const offerSearchService = new OfferSearchService(connectors, semanticRefiner);
+const semanticRefiner = new SemanticRefiner(config.groq, getEligibleRepresentatives);
+const offerSearchService = new OfferSearchService(
+  connectors,
+  semanticRefiner,
+  offerRepository,
+  getEligibleRepresentatives,
+);
 const communeResolver = new CommuneResolver();
 const offerController = new OfferController(
   offerSearchService,
   communeResolver,
-  offerRepository,
   view,
 );
 const profileController = new ProfileController(profileRepository, view);

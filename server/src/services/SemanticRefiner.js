@@ -35,10 +35,12 @@ class SemanticRefiner {
    * @param {object} config - Groq configuration.
    * @param {string} config.apiKey - Groq API key.
    * @param {string} config.model - Groq model identifier.
+   * @param {import("./OfferRepresentativePolicy.js").getEligibleRepresentatives} getEligibleRepresentatives - Representative eligibility policy.
    */
-  constructor(config) {
+  constructor(config, getEligibleRepresentatives) {
     this.apiKey = config.apiKey;
     this.model = config.model;
+    this.getEligibleRepresentatives = getEligibleRepresentatives;
   }
 
   /**
@@ -283,8 +285,16 @@ class SemanticRefiner {
    * @returns {number} The canonical index.
    */
   pickCanonicalIndex(offers, indices) {
-    let bestIndex = indices[0];
-    for (const index of indices) {
+    const indexByOffer = new Map(indices.map((index) => {
+      return [offers[index], index];
+    }));
+    const candidates = indices.map((index) => {
+      return offers[index];
+    });
+    const eligible = this.getEligibleRepresentatives(candidates);
+    let bestIndex = indexByOffer.get(eligible[0]);
+    for (const candidate of eligible) {
+      const index = indexByOffer.get(candidate);
       if (this.isRicher(offers[index], offers[bestIndex])) {
         bestIndex = index;
       }
