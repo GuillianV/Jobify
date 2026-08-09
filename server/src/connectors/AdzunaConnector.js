@@ -7,6 +7,7 @@ import { JobSource } from "../constants/JobSource.js";
 import { SalaryPeriod } from "../constants/SalaryPeriod.js";
 import { ContractType } from "../constants/ContractType.js";
 import { AdzunaConstants } from "../constants/AdzunaConstants.js";
+import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
 import { ContractTypeNormalizer } from "../normalization/ContractTypeNormalizer.js";
 import { DateNormalizer } from "../normalization/DateNormalizer.js";
 
@@ -129,6 +130,7 @@ class AdzunaConnector extends JobConnector {
     return new JobOffer({
       source: JobSource.ADZUNA,
       sourceId: String(raw.id),
+      identityKind: OfferIdentityKind.STABLE,
       title: raw.title,
       description: raw.description ?? null,
       company: new Company({ name: company.display_name ?? null }),

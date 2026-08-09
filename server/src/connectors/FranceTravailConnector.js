@@ -6,6 +6,7 @@ import { Salary } from "../models/Salary.js";
 import { JobSource } from "../constants/JobSource.js";
 import { HttpStatus } from "../constants/HttpStatus.js";
 import { FranceTravailConstants } from "../constants/FranceTravailConstants.js";
+import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
 import { ContractTypeNormalizer } from "../normalization/ContractTypeNormalizer.js";
 import { DateNormalizer } from "../normalization/DateNormalizer.js";
 import { TextNormalizer } from "../normalization/TextNormalizer.js";
@@ -130,6 +131,7 @@ class FranceTravailConnector extends JobConnector {
     return new JobOffer({
       source: JobSource.FRANCE_TRAVAIL,
       sourceId: raw.id,
+      identityKind: OfferIdentityKind.STABLE,
       title: raw.intitule,
       description,
       company: new Company({

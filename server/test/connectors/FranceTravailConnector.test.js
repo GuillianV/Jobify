@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { FranceTravailConnector } from "../../src/connectors/FranceTravailConnector.js";
 import { ContractType } from "../../src/constants/ContractType.js";
 import { JobSource } from "../../src/constants/JobSource.js";
+import { OfferIdentityKind } from "../../src/constants/OfferIdentityKind.js";
 
 const EMPLOYER_DESCRIPTION = "<b>Description entreprise conservée</b>";
 const RAW_OFFER = Object.freeze({
@@ -46,6 +47,7 @@ test("mapOffer cleans France Travail descriptions and preserves structured field
   assert.equal(json.description, "Mission Node.js & API\n\nÉquipe");
   assert.equal(json.source, JobSource.FRANCE_TRAVAIL);
   assert.equal(json.sourceId, RAW_OFFER.id);
+  assert.equal(json.identityKind, OfferIdentityKind.STABLE);
   assert.equal(json.title, RAW_OFFER.intitule);
   assert.equal(json.contractType, ContractType.CDD);
   assert.equal(json.contractTypeLabel, RAW_OFFER.typeContratLibelle);

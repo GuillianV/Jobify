@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { CareerjetConnector } from "../../src/connectors/CareerjetConnector.js";
 import { ContractType } from "../../src/constants/ContractType.js";
 import { JobSource } from "../../src/constants/JobSource.js";
+import { OfferIdentityKind } from "../../src/constants/OfferIdentityKind.js";
 
 const RAW_OFFER = Object.freeze({
   title: "Développeur backend",
@@ -23,6 +24,8 @@ test("mapOffer cleans Careerjet descriptions and preserves essential fields", ()
   assert.equal(json.description, "Node.js");
   assert.equal(json.source, JobSource.CAREERJET);
   assert.equal(json.sourceId, RAW_OFFER.url);
+  assert.equal(json.identityKind, OfferIdentityKind.SURROGATE);
+  assert.equal(json.surrogateMatchable, true);
   assert.equal(json.title, RAW_OFFER.title);
   assert.equal(json.company.name, RAW_OFFER.company);
   assert.equal(json.location.label, RAW_OFFER.locations);
@@ -30,6 +33,26 @@ test("mapOffer cleans Careerjet descriptions and preserves essential fields", ()
   assert.equal(json.applyUrl, RAW_OFFER.url);
   assert.equal(json.publishedAt, "2026-08-01T10:00:00.000Z");
   assert.equal(json.salary.raw, RAW_OFFER.salary);
+});
+
+test("mapOffer builds a deterministic surrogate independent of Careerjet URLs", () => {
+  const connector = new CareerjetConnector({ affid: "test-affiliate" });
+  const first = connector.mapOffer(RAW_OFFER);
+  const second = connector.mapOffer({
+    ...RAW_OFFER,
+    url: "https://example.com/careerjet/rotated",
+  });
+
+  assert.equal(first.surrogateKey, second.surrogateKey);
+  assert.equal(first.surrogateMatchable, true);
+});
+
+test("mapOffer marks incomplete Careerjet surrogates as non-matchable", () => {
+  const connector = new CareerjetConnector({ affid: "test-affiliate" });
+  const offer = connector.mapOffer({ ...RAW_OFFER, company: null });
+
+  assert.equal(typeof offer.surrogateKey, "string");
+  assert.equal(offer.surrogateMatchable, false);
 });
 
 test("mapOffer infers the Careerjet contract from the cleaned description", () => {

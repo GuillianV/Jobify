@@ -1,4 +1,5 @@
 import { TextNormalizer } from "../normalization/TextNormalizer.js";
+import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
 import { Company } from "./Company.js";
 import { JobLocation } from "./JobLocation.js";
 import { Salary } from "./Salary.js";
@@ -13,7 +14,11 @@ class JobOffer {
    * Create a canonical offer.
    * @param {object} params - Offer attributes.
    * @param {string} params.source - Source identifier (see JobSource).
-   * @param {string} params.sourceId - Identifier of the offer within its source.
+   * @param {number|null} [params.id] - Internal Jobify identifier.
+   * @param {string|null} [params.sourceId] - Identifier of the offer within its source.
+   * @param {string} [params.identityKind] - Provider identity strategy.
+   * @param {string|null} [params.surrogateKey] - Conservative provider fingerprint.
+   * @param {boolean} [params.surrogateMatchable] - Whether the surrogate can match observations.
    * @param {string} params.title - Job title.
    * @param {string|null} [params.description] - Full description.
    * @param {import("./Company.js").Company} params.company - Hiring company.
@@ -26,8 +31,12 @@ class JobOffer {
    * @param {object[]} [params.alternates] - Same offer seen on other sources.
    */
   constructor({
+    id = null,
     source,
-    sourceId,
+    sourceId = null,
+    identityKind = OfferIdentityKind.STABLE,
+    surrogateKey = null,
+    surrogateMatchable = false,
     title,
     description = null,
     company,
@@ -39,8 +48,15 @@ class JobOffer {
     publishedAt = null,
     alternates = [],
   }) {
+    if (!OfferIdentityKind.isValid(identityKind)) {
+      throw new TypeError(`Unsupported offer identity kind: ${identityKind}`);
+    }
+    this.id = id;
     this.source = source;
     this.sourceId = sourceId;
+    this.identityKind = identityKind;
+    this.surrogateKey = surrogateKey;
+    this.surrogateMatchable = surrogateMatchable;
     this.title = title;
     this.description = description;
     this.company = company;
@@ -63,7 +79,7 @@ class JobOffer {
   static fromJson(json) {
     return new JobOffer({
       source: json.source,
-      sourceId: json.sourceId,
+      sourceId: json.sourceId ?? null,
       title: json.title,
       description: json.description ?? null,
       company: new Company(json.company ?? {}),
@@ -74,6 +90,23 @@ class JobOffer {
       applyUrl: json.applyUrl ?? null,
       publishedAt: json.publishedAt ?? null,
       alternates: json.alternates ?? [],
+    });
+  }
+
+  /**
+   * Rebuild a persisted JobOffer using the database id as the source of truth.
+   * @param {number} id - Internal identifier read from SQLite.
+   * @param {object} payload - Serialized offer payload.
+   * @returns {JobOffer} The persisted offer.
+   */
+  static fromPersistence(id, payload) {
+    const offer = JobOffer.fromJson(payload);
+    return new JobOffer({
+      ...offer,
+      id,
+      identityKind: payload.identityKind ?? OfferIdentityKind.STABLE,
+      surrogateKey: payload.surrogateKey ?? null,
+      surrogateMatchable: payload.surrogateMatchable ?? false,
     });
   }
 
@@ -110,6 +143,9 @@ class JobOffer {
     return {
       source: this.source,
       sourceId: this.sourceId,
+      identityKind: this.identityKind,
+      surrogateKey: this.surrogateKey,
+      surrogateMatchable: this.surrogateMatchable,
       title: this.title,
       description: this.description,
       company: this.company ? this.company.toJson() : null,

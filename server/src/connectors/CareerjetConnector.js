@@ -5,6 +5,8 @@ import { JobLocation } from "../models/JobLocation.js";
 import { Salary } from "../models/Salary.js";
 import { JobSource } from "../constants/JobSource.js";
 import { CareerjetConstants } from "../constants/CareerjetConstants.js";
+import { OfferIdentityKind } from "../constants/OfferIdentityKind.js";
+import { CareerjetSurrogateIdentity } from "../identity/CareerjetSurrogateIdentity.js";
 import { TextNormalizer } from "../normalization/TextNormalizer.js";
 import { ContractTypeNormalizer } from "../normalization/ContractTypeNormalizer.js";
 import { DateNormalizer } from "../normalization/DateNormalizer.js";
@@ -102,22 +104,35 @@ class CareerjetConnector extends JobConnector {
   mapOffer(raw) {
     const description = TextNormalizer.htmlToPlainText(raw.description);
     const contractText = [raw.title, description].join(TITLE_DESCRIPTION_SEPARATOR);
+    const city = this.extractCity(raw.locations);
+    const publishedAt = DateNormalizer.toIso(raw.date);
+    const surrogate = CareerjetSurrogateIdentity.build({
+      title: raw.title,
+      company: raw.company,
+      city,
+      locationLabel: raw.locations,
+      publishedAt,
+      description,
+    });
     return new JobOffer({
       source: JobSource.CAREERJET,
       sourceId: raw.url,
+      identityKind: OfferIdentityKind.SURROGATE,
+      surrogateKey: surrogate.surrogateKey,
+      surrogateMatchable: surrogate.surrogateMatchable,
       title: raw.title,
       description,
       company: new Company({ name: raw.company ?? null }),
       location: new JobLocation({
         label: raw.locations ?? null,
-        city: this.extractCity(raw.locations),
+        city,
         country: COUNTRY_FRANCE,
       }),
       contractType: ContractTypeNormalizer.fromLabel(contractText),
       contractTypeLabel: null,
       salary: Salary.fromLabel(raw.salary ?? null),
       applyUrl: raw.url ?? null,
-      publishedAt: DateNormalizer.toIso(raw.date),
+      publishedAt,
     });
   }
 }
