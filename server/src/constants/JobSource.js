@@ -8,6 +8,8 @@ class JobSource {
 
   static CAREERJET = "careerjet";
 
+  static HELLOWORK = "hellowork";
+
   static ATS = "ats";
 }
 
