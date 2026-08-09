@@ -40,6 +40,16 @@ jobify/
 └── CLAUDE.md                 Mandatory coding conventions
 ```
 
+### Offer management
+
+Jobify stores observations from France Travail, Adzuna, Careerjet, and
+HelloWork separately, then deduplicates the results for display. Provider
+identity, persistence, and deduplication are intentionally separate so that
+different versions of the same posting remain available and Jobify can later
+select the most relevant content for analysis and application preparation.
+
+See [`docs/offer-data-foundation.md`](docs/offer-data-foundation.md).
+
 ## Requirements
 
 - **Node.js 24** (see `.nvmrc`). With nvm: `nvm use`.
