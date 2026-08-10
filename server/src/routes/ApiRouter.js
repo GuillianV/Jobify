@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 const OFFERS_ROUTE = "/offres";
+const OFFER_CONTENT_ROUTE = "/offres/:id/contenu";
 const PROFILES_ROUTE = "/profils";
 const PROFILE_BY_ID_ROUTE = "/profils/:id";
 
@@ -29,6 +30,9 @@ class ApiRouter {
     };
     router.get(OFFERS_ROUTE, handleSearch);
     router.post(OFFERS_ROUTE, handleSearch);
+    router.patch(OFFER_CONTENT_ROUTE, (request, response) => {
+      this.offerController.enrichOfferContent(request, response);
+    });
     router.get(PROFILES_ROUTE, (request, response) => {
       this.profileController.listProfiles(request, response);
     });

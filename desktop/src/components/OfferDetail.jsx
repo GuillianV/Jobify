@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { ContractBadge } from "./ContractBadge.jsx";
 import { formatSalary, formatDateTime, openExternal } from "./format.js";
+import {
+  acquireOfferDetail,
+  shouldAcquireOfferDetail,
+} from "../services/offerContentAcquisition.js";
 
 const UNKNOWN_COMPANY = "Entreprise non précisée";
 const NO_DESCRIPTION = "Pas de description fournie par la source.";
@@ -29,9 +33,10 @@ function isTruncated(description) {
  * @param {object} props - Component properties.
  * @param {object} props.offer - The normalized offer to display.
  * @param {Function} props.onClose - Called when the modal should close.
+ * @param {Function} props.onEnrich - Persists DETAIL and updates the parent offer.
  * @returns {JSX.Element} The rendered modal.
  */
-function OfferDetail({ offer, onClose }) {
+function OfferDetail({ offer, onClose, onEnrich }) {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -49,23 +54,20 @@ function OfferDetail({ offer, onClose }) {
 
   useEffect(() => {
     setDetail(null);
-    const canEnrich = !offer.description
-      && offer.applyUrl
-      && window.jobify
-      && window.jobify.fetchOfferDetail;
+    const fetchDetail = window.jobify?.fetchOfferDetail;
+    const canEnrich = shouldAcquireOfferDetail(offer, fetchDetail);
     if (!canEnrich) {
       return undefined;
     }
     let cancelled = false;
     setDetailLoading(true);
-    window.jobify
-      .fetchOfferDetail({ source: offer.source, url: offer.applyUrl })
-      .then((fetched) => {
+    acquireOfferDetail(offer, fetchDetail, onEnrich)
+      .then((enriched) => {
         if (cancelled) {
           return;
         }
-        if (fetched) {
-          setDetail(fetched);
+        if (enriched) {
+          setDetail(enriched);
         }
         setDetailLoading(false);
       })
@@ -77,7 +79,7 @@ function OfferDetail({ offer, onClose }) {
     return () => {
       cancelled = true;
     };
-  }, [offer]);
+  }, [offer, onEnrich]);
 
   const effectiveDescription = detail?.description ?? offer.description;
   const effectiveSalary = detail?.salary ?? offer.salary;

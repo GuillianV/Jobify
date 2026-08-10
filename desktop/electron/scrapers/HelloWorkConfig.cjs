@@ -9,6 +9,10 @@ class HelloWorkConfig {
 
   static BASE_URL = "https://www.hellowork.com";
 
+  static ALLOWED_ORIGIN = "https://www.hellowork.com";
+
+  static ALLOWED_PROTOCOL = "https:";
+
   static SEARCH_PATH = "/fr-fr/emploi/recherche.html";
 
   static KEYWORDS_PARAM = "k";

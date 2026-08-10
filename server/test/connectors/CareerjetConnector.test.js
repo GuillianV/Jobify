@@ -6,8 +6,10 @@ import { JobSource } from "../../src/constants/JobSource.js";
 import { OfferIdentityKind } from "../../src/constants/OfferIdentityKind.js";
 import { OfferContentAcquisition } from "../../src/constants/OfferContentAcquisition.js";
 import { OfferContentCompleteness } from "../../src/constants/OfferContentCompleteness.js";
+import { CareerjetConstants } from "../../src/constants/CareerjetConstants.js";
 
 const RETRIEVED_AT = "2026-08-03T10:00:00.000Z";
+const RICH_TEXT_REPETITIONS = 100;
 
 const RAW_OFFER = Object.freeze({
   title: "Développeur backend",
@@ -40,10 +42,72 @@ test("mapOffer cleans Careerjet descriptions and preserves essential fields", ()
   assert.equal(offer.offerContent.automaticText.acquisition, OfferContentAcquisition.SEARCH);
   assert.equal(
     offer.offerContent.automaticText.completeness,
-    OfferContentCompleteness.KNOWN_TRUNCATED,
+    OfferContentCompleteness.UNKNOWN,
   );
   assert.equal(offer.offerContent.automaticText.retrievedAt, RETRIEVED_AT);
   assert.equal(offer.offerContent.structured, null);
+});
+
+test("search requests the rich Careerjet fragment without changing historical parameters", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = null;
+  let requestedOptions = null;
+  globalThis.fetch = async (url, options) => {
+    requestedUrl = url;
+    requestedOptions = options;
+    return {
+      ok: true,
+      async json() {
+        return { jobs: [] };
+      },
+    };
+  };
+  try {
+    const connector = new CareerjetConnector({ affid: "test-affiliate" });
+    await connector.search({ keywords: "Node.js", location: "Annecy" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(requestedUrl.searchParams.get("fragment_size"), "10000");
+  assert.equal(requestedUrl.searchParams.getAll("fragment_size").length, 1);
+  assert.equal(requestedUrl.searchParams.get("locale_code"), CareerjetConstants.LOCALE_CODE);
+  assert.equal(requestedUrl.searchParams.get("keywords"), "Node js");
+  assert.equal(requestedUrl.searchParams.get("location"), "Annecy");
+  assert.equal(requestedUrl.searchParams.get("affid"), "test-affiliate");
+  assert.equal(requestedUrl.searchParams.get("pagesize"), String(CareerjetConstants.PAGE_SIZE));
+  assert.equal(requestedUrl.searchParams.get("user_ip"), CareerjetConstants.USER_IP);
+  assert.equal(requestedUrl.searchParams.get("user_agent"), CareerjetConstants.USER_AGENT);
+  assert.deepEqual(requestedOptions.headers, {
+    Referer: CareerjetConstants.REFERER,
+    "User-Agent": CareerjetConstants.USER_AGENT,
+  });
+});
+
+test("rich Careerjet content stays complete through normalization and contract inference", () => {
+  const connector = new CareerjetConnector({ affid: "test-affiliate" });
+  const richDescription = `<p>PremiÃ¨re mission</p><p>${"Contenu utile ".repeat(RICH_TEXT_REPETITIONS)}CDI</p>`;
+  const offer = connector.mapOffer({
+    ...RAW_OFFER,
+    description: richDescription,
+  }, RETRIEVED_AT);
+
+  assert.equal(offer.description.startsWith("PremiÃ¨re mission\n\nContenu utile"), true);
+  assert.equal(offer.description.endsWith("CDI"), true);
+  assert.equal(offer.contractType, ContractType.CDI);
+  assert.equal(offer.offerContent.automaticText.acquisition, OfferContentAcquisition.SEARCH);
+  assert.equal(offer.offerContent.automaticText.completeness, OfferContentCompleteness.UNKNOWN);
+});
+
+test("Careerjet surrogate stays stable for repeated rich content and changes with fragment length", () => {
+  const connector = new CareerjetConnector({ affid: "test-affiliate" });
+  const short = connector.mapOffer({ ...RAW_OFFER, description: "Fragment court" });
+  const richPayload = { ...RAW_OFFER, description: "Fragment court avec la suite riche" };
+  const firstRich = connector.mapOffer(richPayload);
+  const secondRich = connector.mapOffer(richPayload);
+
+  assert.equal(firstRich.surrogateKey, secondRich.surrogateKey);
+  assert.notEqual(short.surrogateKey, firstRich.surrogateKey);
 });
 
 test("mapOffer builds a deterministic surrogate independent of Careerjet URLs", () => {

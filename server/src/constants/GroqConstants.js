@@ -17,8 +17,6 @@ class GroqConstants {
 
   static FIRST_CHOICE_INDEX = 0;
 
-  static MIN_RELEVANCE_SCORE = 50;
-
   static DESCRIPTION_SNIPPET_LENGTH = 160;
 }
 

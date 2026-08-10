@@ -336,6 +336,30 @@ test("Careerjet unique surrogate update preserves richer OfferContent", () => {
   connection.close();
 });
 
+test("Careerjet fragment transition conservatively inserts a second observation", () => {
+  const { connection, repository } = createRepository();
+  const short = repository.upsertOne(createCareerjetOffer({
+    description: "Fragment court",
+    offerContent: createContent({
+      value: "Fragment court",
+      completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+    }),
+  }), FIRST_SEEN);
+  const rich = repository.upsertOne(createCareerjetOffer({
+    description: "Fragment court avec une description beaucoup plus riche",
+    offerContent: createContent({
+      value: "Fragment court avec une description beaucoup plus riche",
+      completeness: OfferContentCompleteness.UNKNOWN,
+      retrievedAt: LAST_SEEN,
+    }),
+  }), LAST_SEEN);
+
+  assert.notEqual(short.surrogateKey, rich.surrogateKey);
+  assert.notEqual(short.id, rich.id);
+  assert.equal(connection.prepare("SELECT COUNT(*) count FROM offers").get().count, TWO_ROWS);
+  connection.close();
+});
+
 test("non-matchable and ambiguous Careerjet observations always insert", () => {
   const { connection, repository } = createRepository();
   const incomplete = createCareerjetOffer({ company: new Company({ name: null }) });
@@ -628,5 +652,84 @@ test("reading a legacy payload hydrates content without rewriting the row", () =
     OfferContentCompleteness.KNOWN_TRUNCATED,
   );
   assert.equal(afterRead.payload, serializedLegacy);
+  connection.close();
+});
+
+test("content enrichment targets one id and preserves observation metadata", () => {
+  const { connection, repository } = createRepository();
+  const inserted = repository.upsertOne(createOffer({
+    source: JobSource.HELLOWORK,
+    sourceId: "hellowork-1",
+    applyUrl: "https://www.hellowork.com/fr-fr/emplois/offer.html",
+    offerContent: new OfferContent(),
+  }), FIRST_SEEN);
+  const before = connection.prepare("SELECT * FROM offers WHERE id = ?").get(inserted.id);
+  const enriched = repository.enrichContentById(inserted.id, new OfferContent({
+    automaticText: {
+      value: "Description DETAIL",
+      acquisition: OfferContentAcquisition.DETAIL,
+      completeness: OfferContentCompleteness.PROVIDER_FULL,
+      retrievedAt: LAST_SEEN,
+    },
+  }));
+  const after = connection.prepare("SELECT * FROM offers WHERE id = ?").get(inserted.id);
+
+  assert.equal(enriched.id, inserted.id);
+  assert.equal(enriched.description, "Description DETAIL");
+  assert.equal(after.first_seen_at, before.first_seen_at);
+  assert.equal(after.last_seen_at, before.last_seen_at);
+  assert.equal(after.source, before.source);
+  assert.equal(after.source_id, before.source_id);
+  assert.equal(after.identity_kind, before.identity_kind);
+  assert.equal(after.surrogate_key, before.surrogate_key);
+  assert.equal(after.dedup_key, before.dedup_key);
+  connection.close();
+});
+
+test("content enrichment reuses merge and missing ids never write", () => {
+  const { connection, repository } = createRepository();
+  const inserted = repository.upsertOne(createOffer({
+    offerContent: createContent({
+      value: "Existing complete text",
+      completeness: OfferContentCompleteness.PROVIDER_FULL,
+    }),
+  }), FIRST_SEEN);
+  const preserved = repository.enrichContentById(inserted.id, createContent({
+    value: "Incoming truncated text",
+    completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+    retrievedAt: LAST_SEEN,
+  }));
+  const changesBeforeMissing = connection.prepare("SELECT total_changes() changes").get().changes;
+  const missing = repository.enrichContentById(LEGACY_ID_IN_PAYLOAD, createContent());
+  const changesAfterMissing = connection.prepare("SELECT total_changes() changes").get().changes;
+
+  assert.equal(preserved.description, "Existing complete text");
+  assert.equal(missing, null);
+  assert.equal(changesAfterMissing, changesBeforeMissing);
+  connection.close();
+});
+
+test("HelloWork SEARCH without text cannot overwrite persisted DETAIL content", () => {
+  const { connection, repository } = createRepository();
+  const detail = repository.upsertOne(createOffer({
+    source: JobSource.HELLOWORK,
+    sourceId: "hellowork-persisted-detail",
+    offerContent: new OfferContent({
+      automaticText: {
+        value: "Persisted DETAIL",
+        acquisition: OfferContentAcquisition.DETAIL,
+        completeness: OfferContentCompleteness.PROVIDER_FULL,
+        retrievedAt: FIRST_SEEN,
+      },
+    }),
+  }), FIRST_SEEN);
+  const refreshed = repository.upsertOne(createOffer({
+    source: JobSource.HELLOWORK,
+    sourceId: "hellowork-persisted-detail",
+    offerContent: new OfferContent(),
+  }), LAST_SEEN);
+
+  assert.equal(refreshed.id, detail.id);
+  assert.equal(refreshed.description, "Persisted DETAIL");
   connection.close();
 });

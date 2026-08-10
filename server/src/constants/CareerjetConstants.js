@@ -10,6 +10,8 @@ class CareerjetConstants {
 
   static PAGE_SIZE = 50;
 
+  static RICH_DESCRIPTION_FRAGMENT_SIZE = 10000;
+
   static REFERER = "https://jobify.app/";
 
   static USER_AGENT = "Mozilla/5.0";

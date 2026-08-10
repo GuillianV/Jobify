@@ -1,11 +1,34 @@
 const { BrowserWindow } = require("electron");
 const { HelloWorkConfig } = require("./HelloWorkConfig.cjs");
+const { HelloWorkUrlPolicy } = require("./HelloWorkUrlPolicy.cjs");
 
 const DIACRITICS_PATTERN = /\p{Diacritic}/gu;
 const EMPTY_STRING = "";
 const FIRST_MATCH_GROUP = 1;
 const SECOND_MATCH_GROUP = 2;
 const FIRST_PART_INDEX = 0;
+const SECURED_PERMISSION_SESSIONS = new WeakSet();
+
+/**
+ * Refuse one permission request for a protected HelloWork session.
+ * @param {object} webContentsValue - Requesting web contents.
+ * @param {string} permission - Requested permission.
+ * @param {Function} callback - Electron permission callback.
+ * @returns {void}
+ */
+function denyPermission(webContentsValue, permission, callback) {
+  void webContentsValue;
+  void permission;
+  callback(false);
+}
+
+/**
+ * Refuse every synchronous permission check for a protected HelloWork session.
+ * @returns {boolean} Always false.
+ */
+function denyPermissionCheck() {
+  return false;
+}
 
 /**
  * In-page script executed inside the loaded HelloWork result page. It reads the
@@ -34,23 +57,14 @@ const EXTRACTION_SCRIPT = `
 
 /**
  * In-page script executed on a HelloWork offer detail page. It returns the raw
- * JSON-LD JobPosting block, which carries the full description, the exact
- * publication timestamp and the structured salary.
+ * JSON-LD script bodies, which may carry a JobPosting in several valid shapes.
  */
 const JOB_POSTING_SCRIPT = `
   (function () {
     var scripts = document.querySelectorAll('script[type="application/ld+json"]');
-    for (var i = 0; i < scripts.length; i++) {
-      try {
-        var parsed = JSON.parse(scripts[i].textContent);
-        if (parsed && parsed['@type'] === 'JobPosting') {
-          return scripts[i].textContent;
-        }
-      } catch (error) {
-        continue;
-      }
-    }
-    return null;
+    return Array.prototype.map.call(scripts, function (script) {
+      return script.textContent;
+    });
   })();
 `;
 
@@ -61,6 +75,17 @@ const JOB_POSTING_SCRIPT = `
  * to the canonical offer shape shared with the API connectors.
  */
 class HelloWorkScraper {
+  /**
+   * Create the scraper with its Electron window implementation and URL policy.
+   * @param {object} [dependencies] - Injectable Electron dependencies.
+   * @param {typeof BrowserWindow} [dependencies.browserWindowClass] - Window class.
+   * @param {HelloWorkUrlPolicy} [dependencies.urlPolicy] - DETAIL URL policy.
+   */
+  constructor({ browserWindowClass = BrowserWindow, urlPolicy = new HelloWorkUrlPolicy() } = {}) {
+    this.browserWindowClass = browserWindowClass;
+    this.urlPolicy = urlPolicy;
+  }
+
   /**
    * Search HelloWork and return the normalized offers. Any failure is the
    * caller's to handle; the hidden window is always destroyed.
@@ -100,25 +125,157 @@ class HelloWorkScraper {
    * @returns {Promise<object|null>} The enriched fields, or null when absent.
    */
   async fetchDetail(url) {
-    const rawJson = await this.runInWindow(url, JOB_POSTING_SCRIPT);
-    if (!rawJson) {
+    if (!this.urlPolicy.isAllowed(url)) {
+      throw new Error("HelloWork DETAIL URL is not allowed");
+    }
+    const scrapingWindow = this.createWindow();
+    const cleanup = this.secureDetailWindow(scrapingWindow);
+    try {
+      await this.loadWithTimeout(scrapingWindow, url);
+      const finalUrl = scrapingWindow.webContents.getURL();
+      if (!this.urlPolicy.isAllowed(finalUrl)) {
+        throw new Error("HelloWork DETAIL final URL is not allowed");
+      }
+      const rawJsonValues = await scrapingWindow.webContents.executeJavaScript(
+        JOB_POSTING_SCRIPT,
+        true,
+      );
+      const posting = this.findJobPosting(rawJsonValues);
+      if (!posting) {
+        return null;
+      }
+      return this.normalizeDetail(posting, finalUrl);
+    } finally {
+      cleanup();
+      scrapingWindow.destroy();
+    }
+  }
+
+  /**
+   * Find one valid JobPosting in direct or graph JSON-LD structures.
+   * @param {unknown} rawJsonValues - JSON-LD script bodies.
+   * @returns {object|null} Valid posting with useful description.
+   */
+  findJobPosting(rawJsonValues) {
+    if (!Array.isArray(rawJsonValues)) {
       return null;
     }
-    return this.normalizeDetail(rawJson);
+    for (const rawJson of rawJsonValues) {
+      let parsed;
+      try {
+        parsed = JSON.parse(rawJson);
+      } catch {
+        continue;
+      }
+      const candidates = Array.isArray(parsed?.["@graph"])
+        ? [parsed, ...parsed["@graph"]]
+        : [parsed];
+      const posting = candidates.find((candidate) => {
+        return this.isValidJobPosting(candidate);
+      });
+      if (posting) {
+        return posting;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Tell whether a JSON-LD object is a JobPosting with useful description.
+   * @param {unknown} candidate - Parsed JSON-LD value.
+   * @returns {boolean} True when the candidate is usable.
+   */
+  isValidJobPosting(candidate) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return false;
+    }
+    const types = Array.isArray(candidate["@type"])
+      ? candidate["@type"]
+      : [candidate["@type"]];
+    return types.includes("JobPosting")
+      && typeof candidate.description === "string"
+      && Boolean(candidate.description.trim());
   }
 
   /**
    * Map a raw JSON-LD JobPosting string to the enriched detail fields.
-   * @param {string} rawJson - The JSON-LD JobPosting block.
+   * @param {object} posting - Parsed JSON-LD JobPosting.
+   * @param {string} sourceUrl - Final validated DETAIL URL.
    * @returns {object} The enriched fields.
    */
-  normalizeDetail(rawJson) {
-    const posting = JSON.parse(rawJson);
+  normalizeDetail(posting, sourceUrl) {
     return {
       description: this.cleanDescription(posting.description),
       publishedAt: this.toIsoDate(posting.datePosted),
       salary: this.parseDetailSalary(posting.baseSalary),
+      sourceUrl,
     };
+  }
+
+  /**
+   * Apply DETAIL-only navigation, popup, permission and download protections.
+   * @param {BrowserWindow} scrapingWindow - Hidden DETAIL window.
+   * @returns {Function} Cleanup callback for session-scoped handlers.
+   */
+  secureDetailWindow(scrapingWindow) {
+    const webContents = scrapingWindow.webContents;
+    const electronSession = webContents.session;
+    const urlPolicy = this.urlPolicy;
+    /**
+     * Prevent one download from the hidden session.
+     * @param {object} event - Electron download event.
+     * @returns {void}
+     */
+    function denyDownload(event) {
+      event.preventDefault();
+    }
+    /**
+     * Guard one main-frame navigation target.
+     * @param {object} event - Electron navigation event.
+     * @param {string} targetUrl - Navigation target.
+     * @returns {void}
+     */
+    function guardNavigation(event, targetUrl) {
+      urlPolicy.guardNavigation(event, targetUrl, true);
+    }
+    /**
+     * Guard one redirected navigation target.
+     * @param {object} event - Electron redirect event.
+     * @param {string} targetUrl - Redirect target.
+     * @param {boolean} isInPlace - Whether history is replaced.
+     * @param {boolean} isMainFrame - Whether the main frame redirects.
+     * @returns {void}
+     */
+    function guardRedirect(event, targetUrl, isInPlace, isMainFrame) {
+      void isInPlace;
+      urlPolicy.guardNavigation(event, targetUrl, isMainFrame);
+    }
+    webContents.setWindowOpenHandler(() => {
+      return { action: "deny" };
+    });
+    webContents.on("will-navigate", guardNavigation);
+    webContents.on("will-redirect", guardRedirect);
+    this.securePermissionSession(electronSession);
+    electronSession.on("will-download", denyDownload);
+    return () => {
+      webContents.removeListener("will-navigate", guardNavigation);
+      webContents.removeListener("will-redirect", guardRedirect);
+      electronSession.removeListener("will-download", denyDownload);
+    };
+  }
+
+  /**
+   * Install stable permission denial once for a shared persistent session.
+   * @param {object} electronSession - Electron session shared by DETAIL windows.
+   * @returns {void}
+   */
+  securePermissionSession(electronSession) {
+    if (SECURED_PERMISSION_SESSIONS.has(electronSession)) {
+      return;
+    }
+    electronSession.setPermissionRequestHandler(denyPermission);
+    electronSession.setPermissionCheckHandler(denyPermissionCheck);
+    SECURED_PERMISSION_SESSIONS.add(electronSession);
   }
 
   /**
@@ -232,7 +389,8 @@ class HelloWorkScraper {
    * @returns {BrowserWindow} The hidden scraping window.
    */
   createWindow() {
-    return new BrowserWindow({
+    const BrowserWindowClass = this.browserWindowClass;
+    return new BrowserWindowClass({
       width: HelloWorkConfig.WINDOW_WIDTH,
       height: HelloWorkConfig.WINDOW_HEIGHT,
       show: false,
@@ -240,6 +398,7 @@ class HelloWorkScraper {
         partition: HelloWorkConfig.SESSION_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: true,
       },
     });
   }

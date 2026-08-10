@@ -8,6 +8,7 @@ import { JobLocation } from "../../src/models/JobLocation.js";
 import { Salary } from "../../src/models/Salary.js";
 import { JobSource } from "../../src/constants/JobSource.js";
 import { OfferIdentityKind } from "../../src/constants/OfferIdentityKind.js";
+import { OfferRepresentativeSelector } from "../../src/services/OfferRepresentativeSelector.js";
 
 const FIRST_ID = 1;
 const SECOND_ID = 2;
@@ -79,13 +80,22 @@ function createService(connectorOffers, refine = (offers) => {
       return refine(offers);
     },
   };
+  const deterministicDeduplicator = {
+    deduplicate(offers) {
+      return offers;
+    },
+  };
+  const representativeSelector = new OfferRepresentativeSelector(
+    getEligibleRepresentatives,
+  );
   return {
     calls,
     service: new OfferSearchService(
       [connector],
       semanticRefiner,
       repository,
-      getEligibleRepresentatives,
+      deterministicDeduplicator,
+      representativeSelector,
     ),
   };
 }

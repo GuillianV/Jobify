@@ -11,11 +11,13 @@ class OfferController {
    * @param {import("../services/OfferSearchService.js").OfferSearchService} offerSearchService - Search service.
    * @param {import("../services/CommuneResolver.js").CommuneResolver} communeResolver - City to INSEE resolver.
    * @param {import("../views/JsonView.js").JsonView} view - JSON view.
+   * @param {import("../services/OfferContentAcquisitionService.js").OfferContentAcquisitionService} offerContentAcquisitionService - DETAIL acquisition service.
    */
-  constructor(offerSearchService, communeResolver, view) {
+  constructor(offerSearchService, communeResolver, view, offerContentAcquisitionService) {
     this.offerSearchService = offerSearchService;
     this.communeResolver = communeResolver;
     this.view = view;
+    this.offerContentAcquisitionService = offerContentAcquisitionService;
   }
 
   /**
@@ -72,12 +74,41 @@ class OfferController {
       this.view.renderSuccess(response, {
         count: offers.length,
         offres: offers.map((offer) => {
-          return offer.toJson();
+          return this.toApiJson(offer);
         }),
       });
     } catch (error) {
       this.view.renderError(response, HttpStatus.INTERNAL_SERVER_ERROR, error.message);
     }
+  }
+
+  /**
+   * Enrich one persisted HelloWork observation with Electron DETAIL content.
+   * @param {import("express").Request} request - Incoming request.
+   * @param {import("express").Response} response - Outgoing response.
+   * @returns {void}
+   */
+  enrichOfferContent(request, response) {
+    try {
+      const id = Number(request.params.id);
+      const enriched = this.offerContentAcquisitionService.enrichHelloWorkDetail(id, request.body);
+      this.view.renderSuccess(response, { offre: this.toApiJson(enriched) });
+    } catch (error) {
+      const statusCode = error.statusCode ?? HttpStatus.INTERNAL_SERVER_ERROR;
+      this.view.renderError(response, statusCode, error.message);
+    }
+  }
+
+  /**
+   * Project a persisted observation for the public API with its internal id.
+   * @param {import("../models/JobOffer.js").JobOffer} offer - Persisted observation.
+   * @returns {object} Public API representation.
+   */
+  toApiJson(offer) {
+    return {
+      id: offer.id,
+      ...offer.toJson(),
+    };
   }
 }
 

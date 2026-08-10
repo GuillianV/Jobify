@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { OfferCard } from "./components/OfferCard.jsx";
 import { OfferDetail } from "./components/OfferDetail.jsx";
 import { DISTANCE_OPTIONS_KM, DEFAULT_DISTANCE_KM } from "./constants/searchFilters.js";
+import { applyEnrichedOffer } from "./services/offerContentAcquisition.js";
+import { claimInitialSearch, runLatestSearch } from "./services/searchOrchestration.js";
 
 const SERVER_URL = "http://localhost:3001";
 const OFFERS_ENDPOINT = "/api/offres";
 const PROFILES_ENDPOINT = "/api/profils";
+const OFFER_CONTENT_PATH = "/contenu";
 const STATUS_LOADING = "loading";
 const STATUS_OK = "ok";
 const STATUS_ERROR = "error";
@@ -82,6 +85,27 @@ async function fetchOffers(searchKeywords, searchCity, searchDistanceKm, scraped
 }
 
 /**
+ * Persist Electron-acquired DETAIL content for one authoritative observation id.
+ * @param {number} id - Persistent observation id.
+ * @param {object} detail - Electron DETAIL fields.
+ * @returns {Promise<object>} Enriched API offer.
+ */
+async function persistOfferDetail(id, detail) {
+  const payload = await requestJson(
+    `${SERVER_URL}${OFFERS_ENDPOINT}/${id}${OFFER_CONTENT_PATH}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: detail.description,
+        sourceUrl: detail.sourceUrl,
+      }),
+    },
+  );
+  return payload.offre;
+}
+
+/**
  * Fetch the saved search profiles from the server.
  * @returns {Promise<object[]>} The saved profiles.
  */
@@ -128,19 +152,23 @@ function App() {
   const [error, setError] = useState(null);
   const [selectedOffer, setSelectedOffer] = useState(null);
   const [profiles, setProfiles] = useState([]);
+  const didRunInitialSearch = useRef(false);
+  const searchRequestId = useRef(0);
 
   const runSearch = useCallback(async (searchKeywords, searchCity, searchDistanceKm) => {
-    setStatus(STATUS_LOADING);
-    setError(null);
-    try {
-      const scrapedOffers = await scrapeHelloWork(searchKeywords, searchCity);
-      const offers = await fetchOffers(searchKeywords, searchCity, searchDistanceKm, scrapedOffers);
-      setOffers(offers);
-      setStatus(STATUS_OK);
-    } catch (caught) {
-      setError(caught.message);
-      setStatus(STATUS_ERROR);
-    }
+    await runLatestSearch({
+      requestIdRef: searchRequestId,
+      search: async () => {
+        const scrapedOffers = await scrapeHelloWork(searchKeywords, searchCity);
+        return fetchOffers(searchKeywords, searchCity, searchDistanceKm, scrapedOffers);
+      },
+      setOffers,
+      setStatus,
+      setError,
+      loadingStatus: STATUS_LOADING,
+      successStatus: STATUS_OK,
+      errorStatus: STATUS_ERROR,
+    });
   }, []);
 
   const loadProfiles = useCallback(async () => {
@@ -152,7 +180,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    runSearch(DEFAULT_KEYWORDS, DEFAULT_CITY, DEFAULT_DISTANCE_KM);
+    if (claimInitialSearch(didRunInitialSearch)) {
+      runSearch(DEFAULT_KEYWORDS, DEFAULT_CITY, DEFAULT_DISTANCE_KM);
+    }
     loadProfiles();
   }, [runSearch, loadProfiles]);
 
@@ -185,6 +215,12 @@ function App() {
       loadProfiles();
     }
   };
+
+  const handleEnrichOffer = useCallback(async (id, detail) => {
+    const enriched = await persistOfferDetail(id, detail);
+    applyEnrichedOffer(enriched, setOffers, setSelectedOffer);
+    return enriched;
+  }, []);
 
   const offerPlural = offers.length > 1 ? "s" : "";
 
@@ -306,7 +342,7 @@ function App() {
                 {offers.map((offer) => {
                   return (
                     <OfferCard
-                      key={`${offer.source}-${offer.sourceId}`}
+                      key={offer.id}
                       offer={offer}
                       onSelect={setSelectedOffer}
                     />
@@ -324,6 +360,7 @@ function App() {
           onClose={() => {
             setSelectedOffer(null);
           }}
+          onEnrich={handleEnrichOffer}
         />
       ) : null}
     </div>

@@ -70,6 +70,7 @@ const SELECT_SURROGATE_SQL = `
 `;
 
 const SELECT_ID_SQL = "SELECT * FROM offers WHERE id = ?";
+const UPDATE_CONTENT_SQL = "UPDATE offers SET payload = ? WHERE id = ?";
 
 /**
  * Persists provider observations using their provider identity while retaining
@@ -88,6 +89,7 @@ class OfferRepository {
     this.selectStableStatement = this.connection.prepare(SELECT_STABLE_SQL);
     this.selectSurrogateStatement = this.connection.prepare(SELECT_SURROGATE_SQL);
     this.selectIdStatement = this.connection.prepare(SELECT_ID_SQL);
+    this.updateContentStatement = this.connection.prepare(UPDATE_CONTENT_SQL);
   }
 
   /**
@@ -326,6 +328,25 @@ class OfferRepository {
       return null;
     }
     return this.hydrateRow(row);
+  }
+
+  /**
+   * Merge trusted incoming content into exactly one persisted observation.
+   * @param {number} id - Internal SQLite identifier.
+   * @param {import("../models/OfferContent.js").OfferContent} incomingContent - Trusted content.
+   * @returns {import("../models/JobOffer.js").JobOffer|null} Enriched observation when found.
+   */
+  enrichContentById(id, incomingContent) {
+    const existing = this.findById(id);
+    if (!existing) {
+      return null;
+    }
+    const enriched = new JobOffer({
+      ...existing,
+      offerContent: existing.offerContent.merge(incomingContent),
+    });
+    this.updateContentStatement.run(this.serialize(enriched), id);
+    return this.findById(id);
   }
 
   /**

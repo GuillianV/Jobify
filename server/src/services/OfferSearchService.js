@@ -12,13 +12,21 @@ class OfferSearchService {
    * @param {import("../connectors/JobConnector.js").JobConnector[]} connectors - Connectors.
    * @param {import("./SemanticRefiner.js").SemanticRefiner} semanticRefiner - Semantic refiner.
    * @param {import("../persistence/OfferRepository.js").OfferRepository} offerRepository - Offer store.
-   * @param {import("./OfferRepresentativePolicy.js").getEligibleRepresentatives} getEligibleRepresentatives - Representative eligibility policy.
+   * @param {import("./DeterministicOfferDeduplicator.js").DeterministicOfferDeduplicator} deterministicDeduplicator - Obvious deduplicator.
+   * @param {import("./OfferRepresentativeSelector.js").OfferRepresentativeSelector} representativeSelector - Shared representative selector.
    */
-  constructor(connectors, semanticRefiner, offerRepository, getEligibleRepresentatives) {
+  constructor(
+    connectors,
+    semanticRefiner,
+    offerRepository,
+    deterministicDeduplicator,
+    representativeSelector,
+  ) {
     this.connectors = connectors;
     this.semanticRefiner = semanticRefiner;
     this.offerRepository = offerRepository;
-    this.getEligibleRepresentatives = getEligibleRepresentatives;
+    this.deterministicDeduplicator = deterministicDeduplicator;
+    this.representativeSelector = representativeSelector;
   }
 
   /**
@@ -42,7 +50,8 @@ class OfferSearchService {
     const recent = this.filterByRecency(merged);
     const persisted = this.offerRepository.upsertMany(recent);
     const unique = this.deduplicate(persisted);
-    const refined = await this.semanticRefiner.refine(unique, criteria);
+    const obvious = this.deterministicDeduplicator.deduplicate(unique);
+    const refined = await this.semanticRefiner.refine(obvious, criteria);
     return this.sortByRecency(refined);
   }
 
@@ -112,16 +121,19 @@ class OfferSearchService {
    */
   deduplicate(offers) {
     const groupsByKey = new Map();
-    for (const offer of offers) {
+    offers.forEach((offer, index) => {
       const key = offer.getDeduplicationKey();
       if (!groupsByKey.has(key)) {
         groupsByKey.set(key, []);
       }
-      groupsByKey.get(key).push(offer);
-    }
-    return [...groupsByKey.values()].map((candidates) => {
-      return this.getEligibleRepresentatives(candidates)[0];
+      groupsByKey.get(key).push(index);
     });
+    const representatives = [];
+    for (const indices of groupsByKey.values()) {
+      const canonicalIndex = this.representativeSelector.mergeComponent(offers, indices);
+      representatives.push(offers[canonicalIndex]);
+    }
+    return representatives;
   }
 }
 

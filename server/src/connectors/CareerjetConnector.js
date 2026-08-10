@@ -65,6 +65,10 @@ class CareerjetConnector extends JobConnector {
     }
     url.searchParams.set("affid", this.affid);
     url.searchParams.set("pagesize", String(CareerjetConstants.PAGE_SIZE));
+    url.searchParams.set(
+      "fragment_size",
+      String(CareerjetConstants.RICH_DESCRIPTION_FRAGMENT_SIZE),
+    );
     url.searchParams.set("user_ip", CareerjetConstants.USER_IP);
     url.searchParams.set("user_agent", CareerjetConstants.USER_AGENT);
     const response = await fetch(url, {
@@ -131,7 +135,7 @@ class CareerjetConnector extends JobConnector {
           value: description,
           acquisition: OfferContentAcquisition.SEARCH,
           retrievedAt,
-          completeness: OfferContentCompleteness.KNOWN_TRUNCATED,
+          completeness: OfferContentCompleteness.UNKNOWN,
         },
       }),
       company: new Company({ name: raw.company ?? null }),
