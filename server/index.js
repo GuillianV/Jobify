@@ -8,6 +8,9 @@ import { AdzunaConnector } from "./src/connectors/AdzunaConnector.js";
 import { CareerjetConnector } from "./src/connectors/CareerjetConnector.js";
 import { OfferSearchService } from "./src/services/OfferSearchService.js";
 import { OfferContentAcquisitionService } from "./src/services/OfferContentAcquisitionService.js";
+import { OfferContentEvaluator } from "./src/services/OfferContentEvaluator.js";
+import { OfferPreparationService } from "./src/services/OfferPreparationService.js";
+import { HelloWorkUrlPolicy } from "./src/services/HelloWorkUrlPolicy.js";
 import { SemanticRefiner, SYSTEM_PROMPT } from "./src/services/SemanticRefiner.js";
 import { getEligibleRepresentatives } from "./src/services/OfferRepresentativePolicy.js";
 import { OfferRepresentativeSelector } from "./src/services/OfferRepresentativeSelector.js";
@@ -66,12 +69,26 @@ const offerSearchService = new OfferSearchService(
   representativeSelector,
 );
 const communeResolver = new CommuneResolver();
-const offerContentAcquisitionService = new OfferContentAcquisitionService(offerRepository);
+const helloWorkUrlPolicy = new HelloWorkUrlPolicy();
+const offerContentEvaluator = new OfferContentEvaluator();
+const offerContentAcquisitionService = new OfferContentAcquisitionService(
+  offerRepository,
+  helloWorkUrlPolicy,
+);
+const offerPreparationService = new OfferPreparationService(
+  offerRepository,
+  offerContentEvaluator,
+  helloWorkUrlPolicy,
+  () => {
+    return new Date().toISOString();
+  },
+);
 const offerController = new OfferController(
   offerSearchService,
   communeResolver,
   view,
   offerContentAcquisitionService,
+  offerPreparationService,
 );
 const profileController = new ProfileController(profileRepository, view);
 

@@ -7,9 +7,11 @@ import { OfferContentCompleteness } from "../../src/constants/OfferContentComple
 import { JobSource } from "../../src/constants/JobSource.js";
 import { HttpStatus } from "../../src/constants/HttpStatus.js";
 import { OfferContentAcquisitionConstants } from "../../src/constants/OfferContentAcquisitionConstants.js";
+import { HelloWorkUrlPolicy } from "../../src/services/HelloWorkUrlPolicy.js";
 
 const OFFER_ID = 42;
 const APPLY_URL = "https://www.hellowork.com/fr-fr/emplois/123.html?source=search#detail";
+const RETRIEVED_AT = "2026-08-10T10:00:00.000Z";
 
 /**
  * Create a repository stub and acquisition service for one persisted offer.
@@ -17,12 +19,13 @@ const APPLY_URL = "https://www.hellowork.com/fr-fr/emplois/123.html?source=searc
  * @returns {{service: OfferContentAcquisitionService, calls: object}} Test context.
  */
 function createService(offer) {
-  const calls = { enriched: null };
+  const calls = { enriched: null, enrichmentCount: 0 };
   const repository = {
     findById() {
       return offer;
     },
     enrichContentById(id, content) {
+      calls.enrichmentCount += 1;
       calls.enriched = { id, content };
       return {
         ...offer,
@@ -34,7 +37,10 @@ function createService(offer) {
       };
     },
   };
-  return { service: new OfferContentAcquisitionService(repository), calls };
+  return {
+    service: new OfferContentAcquisitionService(repository, new HelloWorkUrlPolicy()),
+    calls,
+  };
 }
 
 /**
@@ -140,4 +146,73 @@ test("service never degrades better existing content", () => {
   });
 
   assert.equal(result.description, "Existing DETAIL");
+});
+
+test("identical persisted DETAIL is an exact no-op after attachment validation", () => {
+  const existingContent = new OfferContent({
+    automaticText: {
+      value: "Existing DETAIL",
+      acquisition: OfferContentAcquisition.DETAIL,
+      completeness: OfferContentCompleteness.PROVIDER_FULL,
+      retrievedAt: RETRIEVED_AT,
+    },
+  });
+  const offer = createOffer({ offerContent: existingContent });
+  const { service, calls } = createService(offer);
+  const result = service.enrichHelloWorkDetail(OFFER_ID, {
+    description: "Existing DETAIL",
+    sourceUrl: APPLY_URL,
+  });
+
+  assert.equal(result, offer);
+  assert.equal(calls.enrichmentCount, 0);
+  assert.equal(result.offerContent.automaticText.retrievedAt, RETRIEVED_AT);
+});
+
+for (const completeness of [
+  OfferContentCompleteness.UNKNOWN,
+  OfferContentCompleteness.KNOWN_TRUNCATED,
+]) {
+  test(`identical DETAIL upgrades ${completeness} completeness to PROVIDER_FULL`, () => {
+    const existingContent = new OfferContent({
+      automaticText: {
+        value: "Existing DETAIL",
+        acquisition: OfferContentAcquisition.DETAIL,
+        completeness,
+        retrievedAt: RETRIEVED_AT,
+      },
+    });
+    const { service, calls } = createService(createOffer({ offerContent: existingContent }));
+    const result = service.enrichHelloWorkDetail(OFFER_ID, {
+      description: "Existing DETAIL",
+      sourceUrl: APPLY_URL,
+    });
+
+    assert.equal(calls.enrichmentCount, 1);
+    assert.equal(result.offerContent.automaticText.acquisition, OfferContentAcquisition.DETAIL);
+    assert.equal(
+      result.offerContent.automaticText.completeness,
+      OfferContentCompleteness.PROVIDER_FULL,
+    );
+  });
+}
+
+test("different provider-full DETAIL follows the normal non-destructive merge path", () => {
+  const existingContent = new OfferContent({
+    automaticText: {
+      value: "Existing DETAIL",
+      acquisition: OfferContentAcquisition.DETAIL,
+      completeness: OfferContentCompleteness.PROVIDER_FULL,
+      retrievedAt: RETRIEVED_AT,
+    },
+  });
+  const { service, calls } = createService(createOffer({ offerContent: existingContent }));
+  const result = service.enrichHelloWorkDetail(OFFER_ID, {
+    description: "Different DETAIL",
+    sourceUrl: APPLY_URL,
+  });
+
+  assert.equal(calls.enrichmentCount, 1);
+  assert.equal(calls.enriched.content.automaticText.value, "Different DETAIL");
+  assert.equal(result.description, "Different DETAIL");
 });

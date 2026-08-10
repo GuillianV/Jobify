@@ -300,3 +300,20 @@ test("automatic merge never modifies existing user text", () => {
   assert.equal(merged.getAutomaticText(), "New provider text");
   assert.equal(merged.getEffectiveText(), "Existing user text");
 });
+
+test("withUserText replaces user text immutably and preserves automatic and structured content", () => {
+  const existing = new OfferContent({
+    automaticText: automaticText(),
+    userText: { value: "Existing user text", providedAt: FIRST_TIME },
+    structured: structured(),
+  });
+  const before = existing.toPersistenceJson();
+  const replaced = existing.withUserText(" Replacement text ", SECOND_TIME);
+
+  assert.equal(replaced.userText.value, " Replacement text ");
+  assert.equal(replaced.userText.providedAt, SECOND_TIME);
+  assert.deepEqual(replaced.automaticText, existing.automaticText);
+  assert.deepEqual(replaced.structured, existing.structured);
+  assert.notEqual(replaced.structured.value, existing.structured.value);
+  assert.deepEqual(existing.toPersistenceJson(), before);
+});

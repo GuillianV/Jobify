@@ -1,6 +1,9 @@
 import { SearchCriteria } from "../models/SearchCriteria.js";
 import { JobOffer } from "../models/JobOffer.js";
 import { HttpStatus } from "../constants/HttpStatus.js";
+import { OfferPreparationError } from "../services/OfferPreparationError.js";
+
+const CANONICAL_OFFER_ID_PATTERN = /^[1-9]\d*$/u;
 
 /**
  * Controller exposing the offer search resource of the API.
@@ -12,12 +15,20 @@ class OfferController {
    * @param {import("../services/CommuneResolver.js").CommuneResolver} communeResolver - City to INSEE resolver.
    * @param {import("../views/JsonView.js").JsonView} view - JSON view.
    * @param {import("../services/OfferContentAcquisitionService.js").OfferContentAcquisitionService} offerContentAcquisitionService - DETAIL acquisition service.
+   * @param {import("../services/OfferPreparationService.js").OfferPreparationService} offerPreparationService - Preparation flow.
    */
-  constructor(offerSearchService, communeResolver, view, offerContentAcquisitionService) {
+  constructor(
+    offerSearchService,
+    communeResolver,
+    view,
+    offerContentAcquisitionService,
+    offerPreparationService,
+  ) {
     this.offerSearchService = offerSearchService;
     this.communeResolver = communeResolver;
     this.view = view;
     this.offerContentAcquisitionService = offerContentAcquisitionService;
+    this.offerPreparationService = offerPreparationService;
   }
 
   /**
@@ -60,6 +71,22 @@ class OfferController {
   }
 
   /**
+   * Parse one canonical positive decimal SQLite identifier from an HTTP path.
+   * @param {unknown} rawId - Raw route parameter.
+   * @returns {number} Safe positive identifier.
+   */
+  parseOfferId(rawId) {
+    if (typeof rawId !== "string" || !CANONICAL_OFFER_ID_PATTERN.test(rawId)) {
+      throw new OfferPreparationError("Invalid offer id", HttpStatus.BAD_REQUEST);
+    }
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new OfferPreparationError("Invalid offer id", HttpStatus.BAD_REQUEST);
+    }
+    return id;
+  }
+
+  /**
    * Handle a request to search offers across every configured source, merging
    * any client-scraped offers, then persist the result.
    * @param {import("express").Request} request - The incoming request.
@@ -90,9 +117,47 @@ class OfferController {
    */
   enrichOfferContent(request, response) {
     try {
-      const id = Number(request.params.id);
-      const enriched = this.offerContentAcquisitionService.enrichHelloWorkDetail(id, request.body);
-      this.view.renderSuccess(response, { offre: this.toApiJson(enriched) });
+      const id = this.parseOfferId(request.params.id);
+      this.offerContentAcquisitionService.enrichHelloWorkDetail(id, request.body);
+      const preparation = this.offerPreparationService.prepare(id);
+      this.view.renderSuccess(response, this.toPreparationApiJson(preparation));
+    } catch (error) {
+      const statusCode = error.statusCode ?? HttpStatus.INTERNAL_SERVER_ERROR;
+      this.view.renderError(response, statusCode, error.message);
+    }
+  }
+
+  /**
+   * Evaluate the preparation state of one authoritative persisted observation.
+   * @param {import("express").Request} request - Incoming request.
+   * @param {import("express").Response} response - Outgoing response.
+   * @returns {void}
+   */
+  prepareOffer(request, response) {
+    try {
+      const id = this.parseOfferId(request.params.id);
+      const preparation = this.offerPreparationService.prepare(id);
+      this.view.renderSuccess(response, this.toPreparationApiJson(preparation));
+    } catch (error) {
+      const statusCode = error.statusCode ?? HttpStatus.INTERNAL_SERVER_ERROR;
+      this.view.renderError(response, statusCode, error.message);
+    }
+  }
+
+  /**
+   * Replace explicit user content and return its immediate preparation state.
+   * @param {import("express").Request} request - Incoming request.
+   * @param {import("express").Response} response - Outgoing response.
+   * @returns {void}
+   */
+  replaceUserContent(request, response) {
+    try {
+      const id = this.parseOfferId(request.params.id);
+      const preparation = this.offerPreparationService.replaceUserText(
+        id,
+        request.body?.text,
+      );
+      this.view.renderSuccess(response, this.toPreparationApiJson(preparation));
     } catch (error) {
       const statusCode = error.statusCode ?? HttpStatus.INTERNAL_SERVER_ERROR;
       this.view.renderError(response, statusCode, error.message);
@@ -108,6 +173,21 @@ class OfferController {
     return {
       id: offer.id,
       ...offer.toJson(),
+    };
+  }
+
+  /**
+   * Project a preparation result without exposing trusted OfferContent internals.
+   * @param {object} preparation - Internal preparation result.
+   * @returns {object} Public preparation envelope.
+   */
+  toPreparationApiJson(preparation) {
+    return {
+      prepareStatus: preparation.prepareStatus,
+      evaluation: preparation.evaluation,
+      offre: this.toApiJson(preparation.offer),
+      userContent: preparation.userContent,
+      providerAcquisition: preparation.providerAcquisition,
     };
   }
 }

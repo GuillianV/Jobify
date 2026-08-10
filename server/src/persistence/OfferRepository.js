@@ -350,6 +350,29 @@ class OfferRepository {
   }
 
   /**
+   * Explicitly replace user text while preserving identity, provider content and seen timestamps.
+   * @param {number} id - Internal SQLite identifier.
+   * @param {string} value - Validated user-provided text.
+   * @param {string} providedAt - Server-generated submission timestamp.
+   * @returns {import("../models/JobOffer.js").JobOffer|null} Updated or unchanged observation.
+   */
+  replaceUserTextById(id, value, providedAt) {
+    const existing = this.findById(id);
+    if (!existing) {
+      return null;
+    }
+    if (existing.offerContent.userText?.value === value) {
+      return existing;
+    }
+    const updated = new JobOffer({
+      ...existing,
+      offerContent: existing.offerContent.withUserText(value, providedAt),
+    });
+    this.updateContentStatement.run(this.serialize(updated), id);
+    return this.findById(id);
+  }
+
+  /**
    * Hydrate one SQLite row using its columns as identity authority.
    * @param {object} row - SQLite offer row.
    * @returns {import("../models/JobOffer.js").JobOffer} Hydrated observation.

@@ -159,6 +159,20 @@ class OfferContent {
   }
 
   /**
+   * Replace explicit user text without mutating or degrading automatic content.
+   * @param {string} value - Validated user-provided text stored without rewriting.
+   * @param {string} providedAt - Server-generated submission timestamp.
+   * @returns {OfferContent} New content carrying the replacement user text.
+   */
+  withUserText(value, providedAt) {
+    return new OfferContent({
+      automaticText: this.automaticText,
+      userText: { value, providedAt },
+      structured: this.structured,
+    });
+  }
+
+  /**
    * Select the preferred automatic text using completeness, channel and time.
    * @param {object|null} existing - Existing automatic text.
    * @param {object|null} incoming - Incoming automatic text.

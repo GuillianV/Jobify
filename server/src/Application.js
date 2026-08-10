@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { ApplicationConstants } from "./constants/ApplicationConstants.js";
 
 const API_BASE_PATH = "/api";
 
@@ -24,7 +25,7 @@ class Application {
    */
   configure() {
     this.expressApp.use(cors());
-    this.expressApp.use(express.json());
+    this.expressApp.use(express.json({ limit: ApplicationConstants.JSON_BODY_LIMIT }));
     this.expressApp.use(API_BASE_PATH, this.apiRouter.build());
   }
 

@@ -733,3 +733,43 @@ test("HelloWork SEARCH without text cannot overwrite persisted DETAIL content", 
   assert.equal(refreshed.description, "Persisted DETAIL");
   connection.close();
 });
+
+test("explicit user text replacement preserves observation identity, content and seen timestamps", () => {
+  const { connection, repository } = createRepository();
+  const offerContent = new OfferContent({
+    automaticText: {
+      value: "Provider text",
+      acquisition: OfferContentAcquisition.SEARCH,
+      retrievedAt: FIRST_SEEN,
+      completeness: OfferContentCompleteness.UNKNOWN,
+    },
+    structured: {
+      value: { skills: ["Node.js"] },
+      acquisition: OfferContentAcquisition.SEARCH,
+      retrievedAt: FIRST_SEEN,
+    },
+  });
+  const inserted = repository.upsertOne(createOffer({ offerContent }), FIRST_SEEN);
+  const beforeRow = connection.prepare("SELECT * FROM offers WHERE id = ?").get(inserted.id);
+  const updated = repository.replaceUserTextById(inserted.id, " User text ", LAST_SEEN);
+  const afterRow = connection.prepare("SELECT * FROM offers WHERE id = ?").get(inserted.id);
+
+  assert.equal(updated.id, inserted.id);
+  assert.equal(updated.source, inserted.source);
+  assert.equal(updated.sourceId, inserted.sourceId);
+  assert.equal(updated.identityKind, inserted.identityKind);
+  assert.equal(updated.surrogateKey, inserted.surrogateKey);
+  assert.equal(updated.offerContent.userText.value, " User text ");
+  assert.equal(updated.offerContent.userText.providedAt, LAST_SEEN);
+  assert.deepEqual(updated.offerContent.automaticText, offerContent.automaticText);
+  assert.deepEqual(updated.offerContent.structured, offerContent.structured);
+  assert.equal(afterRow.first_seen_at, beforeRow.first_seen_at);
+  assert.equal(afterRow.last_seen_at, beforeRow.last_seen_at);
+
+  const changesBeforeNoOp = connection.prepare("SELECT total_changes() count").get().count;
+  const unchanged = repository.replaceUserTextById(inserted.id, " User text ", NEXT_SEEN);
+  const changesAfterNoOp = connection.prepare("SELECT total_changes() count").get().count;
+
+  assert.equal(changesAfterNoOp, changesBeforeNoOp);
+  assert.equal(unchanged.offerContent.userText.providedAt, LAST_SEEN);
+});

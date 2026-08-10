@@ -13,9 +13,11 @@ class OfferContentAcquisitionService {
   /**
    * Create the service with its authoritative observation repository.
    * @param {import("../persistence/OfferRepository.js").OfferRepository} offerRepository - Store.
+   * @param {import("./HelloWorkUrlPolicy.js").HelloWorkUrlPolicy} helloWorkUrlPolicy - URL policy.
    */
-  constructor(offerRepository) {
+  constructor(offerRepository, helloWorkUrlPolicy) {
     this.offerRepository = offerRepository;
+    this.helloWorkUrlPolicy = helloWorkUrlPolicy;
   }
 
   /**
@@ -40,6 +42,12 @@ class OfferContentAcquisitionService {
     }
     const description = this.validateDescription(rawDetail?.description);
     this.validateAttachment(existing.applyUrl, rawDetail?.sourceUrl);
+    if (existing.offerContent.automaticText?.acquisition === OfferContentAcquisition.DETAIL
+      && existing.offerContent.automaticText.completeness
+        === OfferContentCompleteness.PROVIDER_FULL
+      && existing.offerContent.automaticText.value === description) {
+      return existing;
+    }
     const incomingContent = new OfferContent({
       automaticText: {
         value: description,
@@ -91,18 +99,11 @@ class OfferContentAcquisitionService {
    * @returns {URL} Validated URL.
    */
   parseHelloWorkUrl(value) {
-    try {
-      const parsed = new URL(value);
-      if (parsed.origin !== OfferContentAcquisitionConstants.HELLOWORK_ORIGIN) {
-        throw new TypeError("Unexpected origin");
-      }
-      if (parsed.username || parsed.password) {
-        throw new TypeError("Credentials are forbidden");
-      }
-      return parsed;
-    } catch {
+    const parsed = this.helloWorkUrlPolicy.parse(value);
+    if (!parsed) {
       throw new OfferContentAcquisitionError("Invalid HelloWork DETAIL URL", HttpStatus.BAD_REQUEST);
     }
+    return parsed;
   }
 }
 
