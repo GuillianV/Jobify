@@ -2,21 +2,21 @@
 
 ## Statut et portée
 
-Ce document définit le contrat `OfferAnalysis` V1 et les primitives
-déterministes implémentées pendant l'étape 7A. Il complète
+Ce document définit le contrat `OfferAnalysis` V1, ses primitives
+déterministes 7A et son service d'analyse en mémoire 7B. Il complète
 [l'architecture du contenu](./offer-content-architecture.md) et le
 [flux de préparation](./offer-preparation-flow.md).
 
-L'étape 7A n'analyse encore aucune offre avec un LLM. Elle n'ajoute ni service
-d'orchestration, ni endpoint, ni cache, ni persistance d'analyse, ni interface
-desktop.
+L'étape 7B ajoute un client Groq JSON dédié et un service d'orchestration
+testable par injection. Elle n'ajoute ni endpoint, ni cache, ni persistance
+d'analyse, ni interface desktop.
 
 ## Frontière avec la préparation
 
 `OfferPreparationService` détermine si le contenu effectif est suffisamment
-riche. Le futur `OfferAnalyzerService` restera responsable de recharger une
-observation persistée, de la réévaluer et d'imposer `SUFFICIENT` avant toute
-analyse.
+riche. `OfferAnalyzerService` recharge l'observation persistée, la réévalue et
+impose exactement `SUFFICIENT` avant toute analyse. Il n'appelle pas le service
+de préparation.
 
 `OfferAnalysisInputProjector` est une primitive plus étroite. Il ne connaît pas
 la politique de suffisance et ne dépend pas de `OfferContentEvaluator`.
@@ -173,16 +173,64 @@ n'est sérialisée.
 Ces empreintes sont des entrées destinées à une future clé de cache. Elles ne
 constituent pas encore un cache ou une identité persistante.
 
+## Client Groq JSON — IMPLEMENTED
+
+`GroqJsonClient` encapsule uniquement le transport Analyzer. Il reçoit la clé,
+le transport `fetch`, l'endpoint et les primitives de timer par injection. Une
+requête utilise `temperature: 0`, le mode `json_object`, une limite de 8192
+tokens et un timeout de 30 secondes. Il parse l'enveloppe Groq puis le contenu
+JSON, sans connaître ni valider le contrat `OfferAnalysis`.
+
+Ses erreurs stables distinguent indisponibilité, timeout, limitation de débit,
+authentification, autre erreur HTTP et réponse invalide. Elles n'exposent ni
+clé, ni prompt, ni texte d'offre, ni contenu brut du provider. Aucun appel ne
+fait de retry.
+
+## Prompt et frontière non fiable — IMPLEMENTED
+
+`OfferAnalyzerPrompt` décrit le contrat strict, les enums, les limites, les
+règles d'absence, la factualité conservatrice et les preuves exactes. Les
+exigences, le mode de travail et les contraintes y restent exclusivement
+explicites. Le boilerplate est ignoré sans nettoyage destructif préalable.
+
+Le user prompt sérialise un objet JSON séparant `deterministicContext` et
+`untrustedOfferText`. Le contexte contient uniquement titre, entreprise,
+localisation et contrat. Il ne contient ni identifiant, source, salaire, URL,
+date, alternates ou empreinte. Le texte effectif exact est une donnée externe
+non fiable : ses éventuelles instructions ne sont jamais suivies. Cette
+défense s'ajoute à l'absence d'outils et de secrets et à la validation serveur.
+Aucune donnée candidat n'entre dans ce flux.
+
+## Orchestration Analyzer — IMPLEMENTED
+
+`OfferAnalyzerService.analyze(id)` valide l'identifiant interne, recharge
+l'offre autoritativement, impose `SUFFICIENT`, puis délègue toute projection à
+`OfferAnalysisInputProjector`. Un texte dépassant 100000 unités
+`String.length` est rejeté sans troncature, chunking ou appel provider.
+
+Le service effectue au maximum un appel Groq, puis transmet la valeur JSON
+brute à `OfferAnalysisValidator.validate(raw, exactEffectiveText)`. Il
+n'appelle jamais le normalizer directement. Une sortie partielle, une preuve
+inventée ou une assertion interdite invalide toute l'analyse.
+Les violations du contrat utilisent `OfferAnalysisValidationError` et deviennent
+`ANALYZER_INVALID_OUTPUT`. Les erreurs internes de programmation inattendues ne
+sont pas masquées par ce mapping.
+
+Le résultat en mémoire contient l'instance validée, le snapshot, l'origine du
+contenu, les deux empreintes et la provenance analyzer
+`offer-analyzer-v1`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
+de cache ou métadonnée persistée.
+
 ## Étapes futures
 
 Les éléments suivants restent **FUTURE** :
 
-- **7B** : client Groq, prompt, analyse structurée, parsing et
-  `OfferAnalyzerService` autoritatif ;
-- **7C** : provenance complète, provider/modèle, cache et persistance,
-  endpoint serveur ;
+- **7C** : correction du fallback de modèle vide dans `AppConfig`, wiring
+  runtime, cache, persistance, single-flight, date d'analyse persistée,
+  controller, route et endpoint serveur ;
 - **7D** : orchestration et affichage desktop ;
 - `ApplicationBrief`, profil candidat, comparaison et génération de documents.
 
-Après 7A, Jobify sait définir et vérifier une analyse, mais ne sait pas encore
-en produire une automatiquement.
+Après 7B, Jobify sait produire et vérifier une analyse en mémoire par
+instanciation directe du service. Aucun consommateur API ou desktop n'est
+encore câblé.

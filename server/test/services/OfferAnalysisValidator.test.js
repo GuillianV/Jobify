@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { OfferAnalysisConstants } from "../../src/constants/OfferAnalysisConstants.js";
 import { OfferAnalysisLimits } from "../../src/constants/OfferAnalysisLimits.js";
 import { OfferAnalysisNormalizer } from "../../src/services/OfferAnalysisNormalizer.js";
+import { OfferAnalysisValidationError } from "../../src/services/OfferAnalysisValidationError.js";
 import { OfferAnalysisValidator } from "../../src/services/OfferAnalysisValidator.js";
 
 const SOURCE_TEXT = [
@@ -146,6 +147,17 @@ test("empty analysis and unknown root properties are rejected", () => {
   assert.throws(() => {
     createValidator().validate(unknown, SOURCE_TEXT);
   }, /unknown properties/u);
+});
+
+test("contract violations use the dedicated TypeError subtype", () => {
+  let captured;
+  try {
+    createValidator().validate([], SOURCE_TEXT);
+  } catch (error) {
+    captured = error;
+  }
+  assert.ok(captured instanceof OfferAnalysisValidationError);
+  assert.ok(captured instanceof TypeError);
 });
 
 test("invalid enums and malformed absence are rejected", () => {

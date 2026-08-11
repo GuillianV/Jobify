@@ -1,6 +1,7 @@
 import { OfferAnalysisConstants } from "../constants/OfferAnalysisConstants.js";
 import { OfferAnalysisLimits } from "../constants/OfferAnalysisLimits.js";
 import { OfferAnalysis } from "../models/OfferAnalysis.js";
+import { OfferAnalysisValidationError } from "./OfferAnalysisValidationError.js";
 
 const ROOT_KEYS = Object.freeze([
   "seniority",
@@ -48,7 +49,7 @@ class OfferAnalysisValidator {
    */
   validate(candidate, effectiveText) {
     if (typeof effectiveText !== "string" || !effectiveText) {
-      throw new TypeError("OfferAnalysis validation requires effective text");
+      throw new OfferAnalysisValidationError("OfferAnalysis validation requires effective text");
     }
     this.validateRawStructure(candidate);
     this.validateTotal(candidate);
@@ -101,7 +102,7 @@ class OfferAnalysisValidator {
       "seniority levels",
     );
     if (seniority.levels.length === 0) {
-      throw new TypeError("Seniority levels must not be empty");
+      throw new OfferAnalysisValidationError("Seniority levels must not be empty");
     }
     for (const level of seniority.levels) {
       this.requireEnum(level, OfferAnalysisConstants.SENIORITY_LEVEL, "seniority level");
@@ -144,7 +145,7 @@ class OfferAnalysisValidator {
       "requirement value",
     );
     if (item.assertion !== OfferAnalysisConstants.ASSERTION.EXPLICIT) {
-      throw new TypeError("Requirements must be explicit");
+      throw new OfferAnalysisValidationError("Requirements must be explicit");
     }
     this.validateAssertionStructure(item.assertion, item.evidence, false);
   }
@@ -202,7 +203,7 @@ class OfferAnalysisValidator {
       );
     }
     if (workMode.assertion !== OfferAnalysisConstants.ASSERTION.EXPLICIT) {
-      throw new TypeError("Work mode must be explicit");
+      throw new OfferAnalysisValidationError("Work mode must be explicit");
     }
     this.validateAssertionStructure(workMode.assertion, workMode.evidence, false);
   }
@@ -225,7 +226,7 @@ class OfferAnalysisValidator {
       "constraint value",
     );
     if (item.assertion !== OfferAnalysisConstants.ASSERTION.EXPLICIT) {
-      throw new TypeError("Constraints must be explicit");
+      throw new OfferAnalysisValidationError("Constraints must be explicit");
     }
     this.validateAssertionStructure(item.assertion, item.evidence, false);
   }
@@ -240,20 +241,20 @@ class OfferAnalysisValidator {
   validateAssertionStructure(assertion, evidence, allowInferred) {
     this.requireEnum(assertion, OfferAnalysisConstants.ASSERTION, "assertion");
     if (!allowInferred && assertion === OfferAnalysisConstants.ASSERTION.INFERRED) {
-      throw new TypeError("Inferred assertion is not allowed here");
+      throw new OfferAnalysisValidationError("Inferred assertion is not allowed here");
     }
     if (assertion === OfferAnalysisConstants.ASSERTION.INFERRED) {
       if (evidence !== null) {
-        throw new TypeError("Inferred assertion evidence must be null");
+        throw new OfferAnalysisValidationError("Inferred assertion evidence must be null");
       }
       return;
     }
     this.requireExactObject(evidence, EVIDENCE_KEYS, "evidence");
     if (typeof evidence.text !== "string" || !evidence.text.trim()) {
-      throw new TypeError("Explicit assertion evidence is required");
+      throw new OfferAnalysisValidationError("Explicit assertion evidence is required");
     }
     if (evidence.text.length > OfferAnalysisLimits.MAXIMUM_EVIDENCE_LENGTH) {
-      throw new TypeError("Evidence text is too long");
+      throw new OfferAnalysisValidationError("Evidence text is too long");
     }
   }
 
@@ -266,7 +267,7 @@ class OfferAnalysisValidator {
   validateFinalInvariants(analysis, effectiveText) {
     const semanticItems = this.collectSemanticItems(analysis);
     if (semanticItems.length === 0) {
-      throw new TypeError("OfferAnalysis must contain semantic information");
+      throw new OfferAnalysisValidationError("OfferAnalysis must contain semantic information");
     }
     for (const item of semanticItems) {
       if (Object.hasOwn(item, "value")) {
@@ -277,10 +278,12 @@ class OfferAnalysisValidator {
       }
       if (item.assertion === OfferAnalysisConstants.ASSERTION.EXPLICIT) {
         if (!effectiveText.includes(item.evidence.text)) {
-          throw new TypeError("Explicit evidence was not found in effective text");
+          throw new OfferAnalysisValidationError(
+            "Explicit evidence was not found in effective text",
+          );
         }
       } else if (item.evidence !== null) {
-        throw new TypeError("Inferred assertion evidence must be null");
+        throw new OfferAnalysisValidationError("Inferred assertion evidence must be null");
       }
     }
   }
@@ -313,7 +316,7 @@ class OfferAnalysisValidator {
    */
   validateTotal(analysis) {
     if (this.collectSemanticItems(analysis).length > OfferAnalysisLimits.MAXIMUM_SEMANTIC_ITEMS) {
-      throw new TypeError("OfferAnalysis contains too many semantic items");
+      throw new OfferAnalysisValidationError("OfferAnalysis contains too many semantic items");
     }
   }
 
@@ -326,12 +329,14 @@ class OfferAnalysisValidator {
    */
   requireExactObject(value, expectedKeys, label) {
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      throw new TypeError(`${label} must be an object`);
+      throw new OfferAnalysisValidationError(`${label} must be an object`);
     }
     const actualKeys = Object.keys(value).sort();
     const requiredKeys = [...expectedKeys].sort();
     if (JSON.stringify(actualKeys) !== JSON.stringify(requiredKeys)) {
-      throw new TypeError(`${label} contains missing or unknown properties`);
+      throw new OfferAnalysisValidationError(
+        `${label} contains missing or unknown properties`,
+      );
     }
   }
 
@@ -344,10 +349,10 @@ class OfferAnalysisValidator {
    */
   validateArray(value, maximum, label) {
     if (!Array.isArray(value)) {
-      throw new TypeError(`${label} must be an array`);
+      throw new OfferAnalysisValidationError(`${label} must be an array`);
     }
     if (value.length > maximum) {
-      throw new TypeError(`${label} contains too many items`);
+      throw new OfferAnalysisValidationError(`${label} contains too many items`);
     }
   }
 
@@ -360,10 +365,10 @@ class OfferAnalysisValidator {
    */
   validateSyntheticString(value, maximum, label) {
     if (typeof value !== "string") {
-      throw new TypeError(`${label} must be a string`);
+      throw new OfferAnalysisValidationError(`${label} must be a string`);
     }
     if (value.length > maximum) {
-      throw new TypeError(`${label} is too long`);
+      throw new OfferAnalysisValidationError(`${label} is too long`);
     }
   }
 
@@ -375,7 +380,7 @@ class OfferAnalysisValidator {
    */
   validateNormalizedSyntheticString(value, label) {
     if (!value || value.length > OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH) {
-      throw new TypeError(`${label} is invalid after normalization`);
+      throw new OfferAnalysisValidationError(`${label} is invalid after normalization`);
     }
   }
 
@@ -388,7 +393,7 @@ class OfferAnalysisValidator {
    */
   requireEnum(value, enumObject, label) {
     if (!Object.values(enumObject).includes(value)) {
-      throw new TypeError(`Unsupported ${label}: ${value}`);
+      throw new OfferAnalysisValidationError(`Unsupported ${label}: ${value}`);
     }
   }
 }
