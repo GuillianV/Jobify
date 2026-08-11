@@ -73,7 +73,7 @@ class OfferAnalyzerService {
       }
       throw new OfferAnalyzerError(
         OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
-        {},
+        { validationCode: error.validationCode },
         error,
       );
     }

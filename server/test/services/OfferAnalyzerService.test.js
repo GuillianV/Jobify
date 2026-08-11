@@ -232,15 +232,27 @@ test("unknown Groq transport codes remain unexpected errors", async () => {
 });
 
 test("dedicated validation failures map without masking generic TypeErrors", async () => {
+  const sensitiveSentinel = "SENSITIVE_CANDIDATE_SENTINEL";
   const validationHarness = createHarness({
     analysisValidator: {
       validate() {
-        throw new OfferAnalysisValidationError("invalid candidate");
+        throw new OfferAnalysisValidationError({
+          validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+          message: `invalid candidate ${sensitiveSentinel}`,
+        });
       },
     },
   });
   const mapped = await captureError(validationHarness.service.analyze(OFFER_ID));
   assert.equal(mapped.code, OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT);
+  assert.deepEqual(mapped.safeDetails, {
+    validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+  });
+  const exposable = JSON.stringify({
+    code: mapped.code,
+    safeDetails: mapped.safeDetails,
+  });
+  assert.equal(exposable.includes(sensitiveSentinel), false);
 
   const internalTypeError = new TypeError("internal bug");
   const internalHarness = createHarness({

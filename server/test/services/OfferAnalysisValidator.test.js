@@ -28,6 +28,21 @@ function createValidator() {
 }
 
 /**
+ * Capture one deliberate OfferAnalysis contract rejection.
+ * @param {Function} callback - Validation operation expected to fail.
+ * @returns {OfferAnalysisValidationError} Categorized validation error.
+ */
+function captureValidationError(callback) {
+  try {
+    callback();
+  } catch (error) {
+    assert.ok(error instanceof OfferAnalysisValidationError);
+    return error;
+  }
+  assert.fail("Expected OfferAnalysis validation to fail");
+}
+
+/**
  * Build a minimal valid OfferAnalysis candidate.
  * @returns {object} Valid raw analysis.
  */
@@ -158,6 +173,115 @@ test("contract violations use the dedicated TypeError subtype", () => {
   }
   assert.ok(captured instanceof OfferAnalysisValidationError);
   assert.ok(captured instanceof TypeError);
+});
+
+test("validation codes form the exact closed safe taxonomy", () => {
+  assert.deepEqual(Object.values(OfferAnalysisValidationError.CODE), [
+    "STRUCTURE",
+    "UNKNOWN_KEY",
+    "TYPE",
+    "ENUM",
+    "CARDINALITY",
+    "EVIDENCE",
+    "ASSERTION",
+    "REQUIREMENT_INFERRED",
+    "WORK_CONDITION_INFERRED",
+    "EMPTY_ANALYSIS",
+    "INVARIANT",
+  ]);
+  assert.throws(() => {
+    return new OfferAnalysisValidationError({
+      validationCode: "UNKNOWN_CODE",
+      message: "programming error",
+    });
+  }, (error) => {
+    return error instanceof TypeError
+      && !(error instanceof OfferAnalysisValidationError);
+  });
+});
+
+test("representative contract failures receive every safe validation category", () => {
+  const unknownKey = createMinimalAnalysis();
+  unknownKey.summary = "forbidden";
+  const missingKey = createMinimalAnalysis();
+  delete missingKey.context;
+  const invalidType = createMinimalAnalysis();
+  invalidType.context = null;
+  const sensitiveEnum = createMinimalAnalysis();
+  sensitiveEnum.activities[0].assertion = "SENSITIVE_CANDIDATE_SENTINEL";
+  const excessiveCardinality = createMinimalAnalysis();
+  excessiveCardinality.activities = Array.from(
+    { length: OfferAnalysisLimits.MAXIMUM_ACTIVITIES + 1 },
+    (value, index) => {
+      return createActivity(`Activity ${index}`);
+    },
+  );
+  const invalidEvidence = createMinimalAnalysis();
+  invalidEvidence.activities[0].evidence.text = "invented evidence";
+  const inferredRequirement = createMinimalAnalysis();
+  inferredRequirement.activities = [];
+  inferredRequirement.requirements = [createRequirement("Java")];
+  inferredRequirement.requirements[0].assertion = OfferAnalysisConstants.ASSERTION.INFERRED;
+  inferredRequirement.requirements[0].evidence = null;
+  const inferredWorkMode = createMinimalAnalysis();
+  inferredWorkMode.activities = [];
+  inferredWorkMode.workConditions.workMode = {
+    mode: OfferAnalysisConstants.WORK_MODE.HYBRID,
+    detail: null,
+    assertion: OfferAnalysisConstants.ASSERTION.INFERRED,
+    evidence: null,
+  };
+  const empty = createMinimalAnalysis();
+  empty.activities = [];
+  const cases = [
+    [() => {
+      createValidator().validate([], SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.STRUCTURE],
+    [() => {
+      createValidator().validate(unknownKey, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.UNKNOWN_KEY],
+    [() => {
+      createValidator().validate(missingKey, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.STRUCTURE],
+    [() => {
+      createValidator().validate(invalidType, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.TYPE],
+    [() => {
+      createValidator().validate(sensitiveEnum, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.ENUM],
+    [() => {
+      createValidator().validate(excessiveCardinality, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.CARDINALITY],
+    [() => {
+      createValidator().validate(invalidEvidence, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.EVIDENCE],
+    [() => {
+      createValidator().validateAssertionStructure(
+        OfferAnalysisConstants.ASSERTION.INFERRED,
+        null,
+        false,
+      );
+    }, OfferAnalysisValidationError.CODE.ASSERTION],
+    [() => {
+      createValidator().validate(inferredRequirement, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.REQUIREMENT_INFERRED],
+    [() => {
+      createValidator().validate(inferredWorkMode, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.WORK_CONDITION_INFERRED],
+    [() => {
+      createValidator().validate(empty, SOURCE_TEXT);
+    }, OfferAnalysisValidationError.CODE.EMPTY_ANALYSIS],
+    [() => {
+      createValidator().validate(createMinimalAnalysis(), "");
+    }, OfferAnalysisValidationError.CODE.INVARIANT],
+  ];
+  for (const [callback, expectedCode] of cases) {
+    assert.equal(captureValidationError(callback).validationCode, expectedCode);
+  }
+  const enumError = captureValidationError(() => {
+    createValidator().validate(sensitiveEnum, SOURCE_TEXT);
+  });
+  assert.equal(enumError.message.includes("SENSITIVE_CANDIDATE_SENTINEL"), false);
 });
 
 test("invalid enums and malformed absence are rejected", () => {

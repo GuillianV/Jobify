@@ -216,6 +216,14 @@ Les violations du contrat utilisent `OfferAnalysisValidationError` et deviennent
 `ANALYZER_INVALID_OUTPUT`. Les erreurs internes de programmation inattendues ne
 sont pas masquées par ce mapping.
 
+`OfferAnalysisValidationError` associe chaque rejet à une catégorie fermée et
+sûre. Pour un rejet du validator, `OfferAnalyzerService` expose uniquement
+`validationCode` dans `safeDetails`; aucune valeur candidate, preuve ou donnée
+source n'y entre. Le message et la cause restent des diagnostics internes et
+ne constituent pas une interface publique. Une réponse Groq syntaxiquement
+invalide intervient avant ce validator et ne reçoit donc aucun
+`validationCode` artificiel.
+
 Le résultat en mémoire contient l'instance validée, le snapshot, l'origine du
 contenu, les deux empreintes et la provenance analyzer
 `offer-analyzer-v1`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
