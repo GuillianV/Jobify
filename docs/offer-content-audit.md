@@ -4,6 +4,12 @@
 
 Ce document constitue la source de vérité factuelle de la phase d'audit des descriptions d'offres menée avant la conception de la fonctionnalité « Préparer ma candidature ».
 
+> **État observé lors de l'audit du 9 août 2026.** Les mesures, comportements
+> présents et décisions encore ouvertes ci-dessous décrivent le système à cette
+> date. Plusieurs limites ont depuis été résolues. Elles restent formulées ici
+> dans leur contexte historique afin de ne pas réécrire rétroactivement les
+> observations.
+
 Les audits visaient à déterminer, fournisseur par fournisseur :
 
 - la nature du contenu réellement disponible dans SEARCH et, lorsqu'il existe, dans DETAIL ;
@@ -21,6 +27,30 @@ Le document distingue trois niveaux :
 1. **Observations empiriques / faits** : résultats directement mesurés ou comportements établis par le code actuel.
 2. **Implications probables** : conséquences plausibles à prendre en compte dans la prochaine phase.
 3. **Décisions encore ouvertes** : choix d'architecture qui ne sont pas tranchés par les audits.
+
+## Résultats d'implémentation depuis l'audit
+
+Depuis cet état observé, Jobify a implémenté les décisions suivantes :
+
+- `OfferContent` conserve séparément texte automatique, texte utilisateur et
+  snapshot structuré, avec un merge automatique non destructif ;
+- Careerjet demande désormais `fragment_size=10000` en SEARCH et classe la
+  complétude technique du texte comme `UNKNOWN` ;
+- le DETAIL HelloWork est acquis par Electron sur instruction du serveur, puis
+  persisté comme `PROVIDER_FULL` ;
+- `OfferContentEvaluator` évalue à la demande et sans LLM la suffisance du texte
+  effectif ;
+- le serveur et le desktop implémentent le flux « Préparer ma candidature » ;
+- le texte fourni par l'utilisateur est persisté séparément du texte
+  automatique ;
+- l'ouverture de `OfferDetail` est désormais read-only et ne déclenche aucune
+  acquisition.
+
+Les règles normatives sont décrites dans
+[l'architecture du contenu](./offer-content-architecture.md), le
+[flux de préparation](./offer-preparation-flow.md) et la
+[fondation des données](./offer-data-foundation.md). Les sections « décisions
+encore ouvertes » du présent document restent celles de la date d'audit.
 
 ## Synthèse
 

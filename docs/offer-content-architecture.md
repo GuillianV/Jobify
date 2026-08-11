@@ -2,10 +2,12 @@
 
 ## Statut et portée
 
-Ce document fixe les décisions d'architecture de la fondation « contenu
-d'offre » nécessaire à la future fonctionnalité « Préparer ma candidature ».
-Il est normatif pour l'identité, la persistance et la représentation du contenu
-des offres.
+Ce document est la référence normative du contenu d'offre implémenté. Il fixe
+la représentation de `OfferContent`, sa provenance, son merge non destructif,
+les politiques d'acquisition au niveau contenu et l'évaluation de suffisance.
+L'identité et la persistance des observations sont résumées dans la
+[fondation des données](./offer-data-foundation.md). L'orchestration est définie
+dans le [flux de préparation](./offer-preparation-flow.md).
 
 Les constats qui motivent ces décisions sont documentés dans
 [`docs/offer-content-audit.md`](./offer-content-audit.md). Ce document d'audit
@@ -25,9 +27,9 @@ Cette architecture distingue quatre catégories :
 - **Évolution future** : extension prévue mais non requise pour la première
   implémentation.
 
-`OfferContentEvaluator`, `ApplicationBrief` et la génération de candidature ne
-sont pas conçus ici. Cette fondation s'arrête à la conservation et à la mise à
-disposition du meilleur contenu raisonnablement disponible.
+`OfferContent` et `OfferContentEvaluator` sont **IMPLEMENTED**. `OfferAnalyzer`,
+`ApplicationBrief` et la génération de candidature restent **FUTURE** ; leurs
+contrats ne sont pas figés par ce document.
 
 ## Principes architecturaux
 
@@ -91,12 +93,13 @@ JobOffer {
 - indépendante de la source, du `sourceId`, du surrogate et du regroupement
   cross-provider.
 
-Les opérations métier futures ciblent toujours cet identifiant interne :
+Les opérations métier ciblent toujours cet identifiant interne :
 
 - consultation d'un détail persistant ;
 - enrichissement d'une observation ;
 - ajout d'un texte utilisateur ;
-- remplacement ou suppression d'un override utilisateur.
+- remplacement d'un override utilisateur ;
+- **FUTURE** : suppression explicite d'un override utilisateur.
 
 Le client ne peut pas désigner arbitrairement une cible en fournissant une
 combinaison `source`, `sourceId` ou URL. Il transmet un `id` interne ; le
@@ -296,7 +299,7 @@ React.
 une observation représentative et à exposer des `alternates`. Ce résultat
 agrégé ne détermine plus ce qui est persisté.
 
-### Cible ultérieure
+### Cible FUTURE : `GroupProjection`
 
 ```text
 observations persistées
@@ -304,10 +307,10 @@ observations persistées
 → React
 ```
 
-La `GroupProjection` remplacera le regroupement historique lorsque l'API et le
-desktop pourront évoluer ensemble.
+Une future `GroupProjection` pourra remplacer le regroupement historique
+lorsque l'API et le desktop évolueront ensemble. Son contrat n'est pas figé.
 
-## Modèle `OfferContent`
+## Modèle `OfferContent` — IMPLEMENTED
 
 Le modèle MVP est :
 
@@ -321,6 +324,12 @@ OfferContent {
 
 Le modèle ne conserve pas un historique complet. Il distingue le meilleur
 texte automatique, l'éventuel override utilisateur et un snapshot structuré.
+
+`getEffectiveText()` retourne `userText.value` lorsqu'il existe, sinon
+`automaticText.value`. Cette priorité ne modifie pas la représentation
+automatique : `JobOffer.description` expose uniquement `automaticText.value`.
+Un texte utilisateur ne remplace ni ne dégrade jamais le texte automatique et
+n'est jamais exposé par ce champ.
 
 ### Texte automatique
 
@@ -345,14 +354,17 @@ fournisseur :
 
 `PROVIDER_FULL` ne signifie ni que l'annonce est exhaustive, ni qu'elle est de
 bonne qualité, ni que son contenu est suffisant pour préparer une candidature.
-Cette suffisance relèvera plus tard de `OfferContentEvaluator`.
+Cette suffisance relève de `OfferContentEvaluator` et reste indépendante de la
+complétude fournisseur.
 
-Les politiques envisagées à partir des observations d'audit sont :
+Les politiques actuellement implémentées, issues des observations d'audit,
+sont :
 
-- France Travail SEARCH : `PROVIDER_FULL` ;
-- HelloWork DETAIL : `PROVIDER_FULL` lorsqu'un `JobPosting` valide existe ;
-- Adzuna SEARCH : `KNOWN_TRUNCATED` ;
-- Careerjet SEARCH avec `fragment_size=10000` : `UNKNOWN`.
+- France Travail : SEARCH, `PROVIDER_FULL` ;
+- Adzuna : SEARCH, `KNOWN_TRUNCATED` ;
+- Careerjet : SEARCH avec `fragment_size=10000`, `UNKNOWN` ;
+- HelloWork : SEARCH sans texte automatique exploitable, puis DETAIL acquis par
+  Electron et persisté `PROVIDER_FULL` lorsqu'une acquisition valide aboutit.
 
 Ces classifications sont des politiques révisables si les fournisseurs
 changent. Elles ne transforment pas les échantillons d'audit en garantie
@@ -373,8 +385,8 @@ Le texte effectif est `userText.value` lorsqu'un override existe, sinon
 `USER_PASTE` est une autorité utilisateur explicite, pas un niveau dans une
 échelle de qualité automatique. Une récupération automatique peut continuer à
 améliorer `automaticText`, mais elle ne remplace et ne masque jamais
-`userText`. Seule une action explicite de l'utilisateur peut remplacer ou
-supprimer cet override.
+`userText`. Une action explicite de l'utilisateur peut remplacer cet override.
+Sa suppression explicite reste **FUTURE**.
 
 ### Merge du texte automatique
 
@@ -383,12 +395,19 @@ Le remplacement de `automaticText` est déterministe :
 1. `PROVIDER_FULL` est préféré à `UNKNOWN`, lui-même préféré à
    `KNOWN_TRUNCATED` ;
 2. à complétude identique, `DETAIL` est préféré à `SEARCH` ;
-3. à complétude et acquisition identiques, le `retrievedAt` le plus récent
+3. à complétude et acquisition identiques, le timestamp valide le plus récent
    gagne ;
-4. une observation plus fraîche ne peut pas provoquer une dégradation.
+4. à égalité, l'existant gagne ;
+5. une observation plus fraîche ne peut pas provoquer une dégradation.
 
 La longueur du texte n'établit jamais sa complétude et ne participe pas à ce
 classement.
+
+Un DETAIL `PROVIDER_FULL` dont le texte est strictement identique à un DETAIL
+`PROVIDER_FULL` existant est un no-op : `retrievedAt` seul ne provoque pas une
+écriture. En revanche, le même texte DETAIL précédemment classé `UNKNOWN` ou
+`KNOWN_TRUNCATED` peut être persisté de nouveau afin de devenir
+`PROVIDER_FULL`.
 
 ### Snapshot structuré
 
@@ -415,6 +434,54 @@ La règle de remplacement est minimale :
 
 La richesse apparente, le nombre de champs et la longueur des tableaux ne sont
 pas des critères de comparaison au MVP.
+
+## `OfferContentEvaluator` — IMPLEMENTED
+
+`OfferContentEvaluator` détermine à la demande si le texte effectif contient
+assez de matière pour poursuivre une future préparation de candidature. Il est
+pur, déterministe, sans LLM et utilise `getEffectiveText()`, donc le texte
+utilisateur lorsqu'il existe.
+
+La distinction suivante est normative :
+
+```text
+provider completeness != application sufficiency
+```
+
+La politique courante porte la version
+`offer-content-sufficiency-v1`. Elle retourne `SUFFICIENT`, `INSUFFICIENT` ou
+`UNDETERMINED`, accompagnés de raisons et des métriques :
+
+- `characterCount` ;
+- `wordCount` ;
+- `distinctWordCount` ;
+- `repeatedFiveGramShare`.
+
+La décision V1 est appliquée dans cet ordre :
+
+1. l'absence de texte produit `INSUFFICIENT` avec `MISSING_TEXT` ;
+2. si `characterCount < 300`, ou `wordCount < 40`, ou
+   `distinctWordCount < 30`, le contenu reçoit `TOO_SHORT` ;
+3. un texte égal, après la normalisation prévue, à l'un des placeholders V1
+   reçoit `PLACEHOLDER_CONTENT` ;
+4. si `repeatedFiveGramShare >= 0.80`, le contenu reçoit
+   `HIGHLY_REPETITIVE` ;
+5. la présence d'au moins une de ces raisons produit `INSUFFICIENT` ;
+6. sinon, si `characterCount >= 800`, et `wordCount >= 120`, et
+   `distinctWordCount >= 80`, le contenu est `SUFFICIENT` ;
+7. dans tous les autres cas, il est `UNDETERMINED`.
+
+Les placeholders V1 exacts sont : `description non disponible`,
+`description indisponible`, `contenu non disponible`, `contenu indisponible`,
+`voir l'annonce`, `consulter l'annonce`, `voir l'offre`, `consulter l'offre` et
+`cliquez ici pour voir l'annonce`. Une ponctuation terminale et les variantes
+d'apostrophe prévues par la normalisation ne changent pas leur reconnaissance.
+
+Une décision `SUFFICIENT` porte la raison `SUFFICIENT_TEXT_VOLUME` et une
+décision `UNDETERMINED` la raison `INTERMEDIATE_CONTENT`. Les métriques d'un
+texte absent valent zéro et indiquent la source `NONE`. La complétude et le
+canal d'acquisition sont exposés à titre diagnostique mais ne prennent pas part
+à la décision.
 
 ## Données spécifiques aux fournisseurs
 
@@ -450,23 +517,18 @@ Les projections suivantes sont conceptuellement distinctes :
 - projection `SemanticRefiner` : signaux de déduplication et de pertinence,
   avec texte strictement borné ;
 - projection de détail : contenu effectif et attributs nécessaires à la vue ;
-- future `GroupProjection` : observation représentative, `members` et
-  `bestContentOfferId`.
-
-Dans la `GroupProjection`, chaque membre est référencé par l'id interne Jobify,
-sa source, son éventuel `sourceId` et son `applyUrl`. `bestContentOfferId`
-référence l'observation dont le contenu est sélectionné, sans fusionner les
-lignes sources.
+- future `GroupProjection` : projection calculée regroupant plusieurs
+  observations équivalentes, destinée à remplacer progressivement le mécanisme
+  legacy `alternates`. Son contrat exact reste à définir.
 
 **Invariant architectural.** Le `OfferContent` complet persistant ne doit
 jamais être automatiquement sérialisé en entier dans le prompt de
 `SemanticRefiner`. La projection doit appliquer une limite explicite,
 configurée et testée.
 
-## Ordre d'implémentation
+## État d'implémentation
 
-Les premières étapes sont volontairement séparées afin d'arrêter rapidement la
-perte de données sans refonte globale :
+Les étapes suivantes sont **IMPLEMENTED** :
 
 1. formaliser l'identité de `JobOffer`, l'id interne et les chemins
    d'hydratation ;
@@ -474,23 +536,25 @@ perte de données sans refonte globale :
    observation fournisseur ;
 3. persister les observations avant la déduplication tout en conservant
    temporairement les réponses API et React existantes ;
-4. introduire `OfferContent` et les règles de merge non destructif ;
-5. introduire ultérieurement la `GroupProjection` et retirer le regroupement
-   historique.
+4. `OfferContent` et ses règles de merge non destructif ;
+5. `OfferContentEvaluator` et la politique de suffisance V1.
 
-Avant d'activer Careerjet avec `fragment_size=10000`, la projection utilisée
-par `SemanticRefiner` devra être explicitement bornée et couverte par des tests
-avec des descriptions longues. Le stockage d'un contenu riche n'autorise pas
-sa propagation implicite dans le contexte LLM.
+Careerjet utilise désormais `fragment_size=10000`. La projection utilisée par
+`SemanticRefiner` est explicitement bornée et couverte par des tests avec des
+descriptions longues. Le stockage d'un contenu riche n'autorise pas sa
+propagation implicite dans le contexte LLM.
 
-## Hors périmètre immédiat
+## Évolutions FUTURE
 
-Les sujets suivants ne font pas partie de cette fondation MVP :
+Les sujets suivants ne sont pas implémentés et leurs contrats ne sont pas
+figés :
 
-- `OfferContentEvaluator` ;
+- `OfferAnalyzer` ;
 - `ApplicationBrief` ;
 - génération de lettre, message ou autre texte de candidature ;
-- score numérique de qualité du contenu ;
+- évolution éventuelle de la politique de suffisance après V1 ;
+- suppression explicite d'un `userText` ;
+- `GroupProjection` et retrait des `alternates` historiques ;
 - historique complet des versions ;
 - déduplication persistante sophistiquée ;
 - réconciliation automatique des doublons Careerjet.

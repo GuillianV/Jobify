@@ -1,10 +1,11 @@
 # Jobify
 
 Jobify is a **desktop app** that aggregates job offers from several sources,
-normalizes them into a single model, deduplicates them, and presents them ready
-to review. It prepares **complete application dossiers** (offer, and — planned —
-tailored CV, cover letter, company info, contacts). There is **no automatic
-submission**: everything is laid out and the human decides whether to apply.
+normalizes and persists each provider observation, then deduplicates the list
+shown for review. It can determine whether an offer contains enough effective
+content to continue a future application workflow. Analysis and generation of
+tailored CVs, cover letters, messages or company information remain **FUTURE**.
+There is no automatic submission: the human always decides whether to apply.
 
 ## Architecture in one minute
 
@@ -15,9 +16,9 @@ submission**: everything is laid out and the human decides whether to apply.
   server, it does the **client-side scraping** (HelloWork today) using the
   user's own browser session — cookies never leave the machine. Scraped offers
   are sent to the server so they go through the same dedup pipeline.
-- **Deduplication / relevance** — an optional Groq LLM call clusters duplicate
-  offers across sources and scores relevance. Without a key it degrades
-  gracefully to exact deduplication.
+- **Deduplication / relevance** — exact matching, deterministic obvious-match
+  rules, then optional guarded semantic refinement. Without a Groq key, the
+  deterministic rules remain active.
 
 ```
 jobify/
@@ -48,7 +49,13 @@ identity, persistence, and deduplication are intentionally separate so that
 different versions of the same posting remain available and Jobify can later
 select the most relevant content for analysis and application preparation.
 
-See [`docs/offer-data-foundation.md`](docs/offer-data-foundation.md).
+Each observation has an `OfferContent` that keeps automatic content, optional
+user-provided content and structured data separate. Its effective text is
+evaluated deterministically before the preparation flow continues.
+
+See the [data foundation](docs/offer-data-foundation.md), the
+[content architecture](docs/offer-content-architecture.md), and the
+[preparation flow](docs/offer-preparation-flow.md).
 
 ## Requirements
 
@@ -92,7 +99,7 @@ works with no key at all. The more keys you add, the more sources you get.
 | **France Travail** (main source) | `FRANCE_TRAVAIL_CLIENT_ID`, `FRANCE_TRAVAIL_CLIENT_SECRET`, `FRANCE_TRAVAIL_SCOPE` | Recommended | https://francetravail.io/inscription — create an app **and subscribe it to the "Offres d'emploi v2" API**, then paste the client id/secret. |
 | **Adzuna** | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | Optional | https://developer.adzuna.com/signup |
 | **Careerjet** | `CAREERJET_AFFID` | Optional | https://www.careerjet.com/partners/ |
-| **Groq** (dedup + relevance) | `GROQ_API_KEY`, `GROQ_MODEL` | Optional | https://console.groq.com/keys — without it, exact dedup only. |
+| **Groq** (dedup + relevance) | `GROQ_API_KEY`, `GROQ_MODEL` | Optional | https://console.groq.com/keys — without it, deterministic deduplication remains active; only semantic deduplication is disabled. |
 | **HelloWork** (scraping) | none | — | Client-side, uses the user's session. No key. |
 
 Notes:
@@ -100,26 +107,39 @@ Notes:
   the docs say so.
 - `GROQ_MODEL` defaults to `llama-3.3-70b-versatile` when left empty. The free
   tier has a **daily token cap (~100k/day)**; once hit, the server logs a 429
-  and falls back to exact dedup until it resets.
+  and keeps deterministic deduplication active without the semantic layer until
+  it resets.
 
 ## How it works locally
 
 1. In the app, enter keywords + a city + a radius and hit **Rechercher**.
 2. The desktop app scrapes HelloWork locally, then POSTs the search (with the
    scraped offers) to the server.
-3. The server queries the configured legal APIs, merges everything, dedups
-   (exact + optional Groq), filters to the last 3 weeks, sorts by date, persists
-   to SQLite, and returns the list.
-4. Click an offer to open the detail view. For HelloWork offers, the full
-   description, exact date/time and salary are fetched on demand from the offer
-   page. **Voir l'annonce sur le site** opens the original posting.
-5. **+ Enregistrer cette recherche** saves the current search as a profile
+3. The server queries the configured legal APIs, filters recent observations,
+   persists every provider observation to SQLite, then applies exact,
+   deterministic obvious and optional guarded semantic deduplication for the
+   returned list.
+4. Click an offer to open its detail view. Opening it is read-only and never
+   starts scraping or content acquisition. **Voir l'annonce sur le site** opens
+   the original posting.
+5. **Préparer ma candidature** asks the server to evaluate the persisted offer.
+   For HelloWork, the desktop acquires and persists DETAIL content only when the
+   server requests it. If automatic content remains insufficient, the user can
+   provide the offer text. `READY` means only that the content is sufficient to
+   continue the future application pipeline.
+6. **+ Enregistrer cette recherche** saves the current search as a profile
    (shown as a chip you can re-run or delete).
 
 ### HTTP API (for reference)
 
 - `GET|POST /api/offres?motsCles=&lieu=&distance=` — search (POST body may carry
   `{ "scrapedOffers": [...] }`).
+- `POST /api/offres/:id/prepare` — evaluate an offer and return the next
+  preparation instruction.
+- `PATCH /api/offres/:id/contenu` — persist provider DETAIL content requested by
+  the server and return the updated preparation state.
+- `PUT /api/offres/:id/contenu-utilisateur` — persist explicit user-provided
+  text separately and return the updated preparation state.
 - `GET /api/profils` · `POST /api/profils` · `DELETE /api/profils/:id` — saved
   search profiles.
 
@@ -155,9 +175,13 @@ The `Autofill.enable failed` messages in the DevTools console are cosmetic.
 
 ## Status
 
-Done: multi-source aggregation (France Travail + Adzuna + Careerjet), full
-normalization, exact + semantic dedup, recency/distance filters, detail view
-with on-demand HelloWork enrichment, SQLite persistence, saved search profiles.
+Done: multi-source aggregation, normalization, separate provider-observation
+persistence, deterministic + guarded semantic deduplication, recency/distance
+filters, non-destructive offer content, deterministic content evaluation,
+server/desktop preparation flow, persisted HelloWork DETAIL acquisition,
+user-text fallback, and saved search profiles.
 
-Next: scheduled background searches + new-offer notifications, then tailored
-CV / cover letter generation and the company sheet (SIRENE).
+**FUTURE:** scheduled background searches and notifications; `OfferAnalyzer`;
+a structured application representation such as `ApplicationBrief`; tailored
+CV, cover letter and message generation; and the company sheet (SIRENE). Their
+exact contracts are not yet fixed.

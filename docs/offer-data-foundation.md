@@ -1,126 +1,122 @@
 # Offer data foundation
 
-Cette évolution prépare Jobify à exploiter de manière fiable le contenu des
-offres, notamment pour les futures fonctionnalités de préparation de
-candidature et de génération de lettres de motivation.
+Cette fondation permet à Jobify d'exploiter le contenu des offres sans confondre
+identité fournisseur, persistance et déduplication d'affichage. Un `JobOffer`
+représente toujours une observation fournisseur, jamais une offre canonique
+fusionnant plusieurs sources.
 
-Auparavant, identité, persistance et déduplication étaient trop liées. Des
-observations provenant de plusieurs fournisseurs pouvaient être éliminées par
-la déduplication avant même leur persistance.
+## Les trois responsabilités
 
-## Les trois concepts séparés
+Jobify distingue :
 
-Jobify distingue désormais trois responsabilités :
-
-1. **Identité fournisseur** : reconnaître une même annonce au sein d'une source.
+1. **Identité fournisseur** : reconnaître une même annonce au sein d'une
+   source.
 2. **Persistance** : conserver chaque observation fournisseur dans SQLite.
-3. **Déduplication d'affichage** : choisir la représentation retournée par
-   l'API et présentée dans l'interface.
+3. **Déduplication d'affichage** : calculer la représentation présentée par
+   l'API et le desktop.
 
 ```text
 identité fournisseur
-≠ persistance
-≠ déduplication d'affichage
+!= persistance
+!= déduplication d'affichage
 ```
 
-Un `JobOffer` représente donc toujours une observation fournisseur, et non une
-offre canonique fusionnant plusieurs sources.
+## Identité des observations
 
-## 1. Identité des observations
-
-Chaque observation persistée possède un `id` interne généré par SQLite. France
-Travail, Adzuna et HelloWork ont une identité `STABLE`, fondée sur
-`(source, sourceId)`.
+Chaque observation persistée possède un `id` interne généré par SQLite.
+`offers.id INTEGER PRIMARY KEY` est l'identité interne autoritative de
+l'observation persistée. France Travail, Adzuna et HelloWork ont une identité
+`STABLE`, fondée sur `(source, sourceId)`.
 
 Careerjet utilise une identité `SURROGATE`, car son URL n'est pas suffisamment
-stable pour servir d'identifiant. Son empreinte combine plusieurs signaux de
-l'offre. Si plusieurs observations correspondent à cette empreinte, Jobify
-préfère conserver un doublon plutôt que risquer de fusionner deux offres
-différentes. Le détail du calcul est décrit dans la
-[documentation d'architecture](./offer-content-architecture.md).
+stable. Son empreinte combine plusieurs signaux de l'offre. Si plusieurs lignes
+correspondent, Jobify insère une nouvelle observation plutôt que de risquer une
+fusion incorrecte. Le calcul et les règles d'upsert sont décrits dans
+[l'architecture du contenu](./offer-content-architecture.md).
 
-## 2. Persistance par observation fournisseur
+## Persistance par observation fournisseur
 
-`dedup_key` n'est plus la clé primaire de `offers` : il reste uniquement un
-signal de similarité. Chaque observation fournisseur possède sa propre ligne,
-même lorsque plusieurs sources semblent décrire le même emploi.
+`dedup_key` est un signal de similarité, pas une identité. Chaque observation
+fournisseur possède sa propre ligne, même lorsque plusieurs sources semblent
+décrire le même emploi.
 
 ```text
-France Travail → observation #101
-Careerjet      → observation #205
+France Travail -> observation #101
+Careerjet      -> observation #205
 
 Même emploi possible, deux observations conservées.
 ```
 
-## 3. Persistance avant déduplication
-
-Le pipeline actuel suit cet ordre :
+La persistance intervient avant toute déduplication cross-provider :
 
 ```text
 observations fournisseurs
-→ filtre de récence
-→ persistance de toutes les observations récentes
-→ déduplication exacte
-→ raffinage et déduplication sémantique
-→ tri
-→ réponse API
+-> filtre individuel de récence
+-> persistance de toutes les observations récentes
+-> déduplication exacte
+-> rapprochements déterministes évidents
+-> raffinement sémantique gardé
+-> tri
+-> réponse API
 ```
 
-La déduplication ne décide plus ce qui existe en base. Elle décide seulement
-quelle représentation est retournée à l'utilisateur. Une observation écartée
-ensuite par la déduplication ou la pertinence peut donc rester conservée dans
-SQLite.
+La déduplication décide uniquement quelle représentation est retournée. Une
+observation écartée de la liste reste disponible dans SQLite. Les scores et
+regroupements sémantiques sont non destructifs et leur cache est persistant ;
+ils ne suppriment ni ne fusionnent les observations fournisseur.
 
-## 4. Choix du représentant
+## Politique de déduplication
 
-Careerjet peut représenter une offre lorsqu'il est la seule source disponible.
-S'il est regroupé avec au moins une autre source, il reste persisté mais n'est
-pas choisi comme représentant. Aucune priorité globale supplémentaire ne
-départage France Travail, Adzuna et HelloWork.
+Le pipeline applique successivement :
 
-Cette règle tient au contenu Careerjet actuellement récupéré par Jobify,
-généralement plus tronqué et moins exploitable pour l'affichage. Elle est
-transitoire : une logique générique fondée sur la qualité et la complétude du
-contenu pourra la remplacer.
+- une déduplication exacte ;
+- des règles déterministes pour les équivalences évidentes ;
+- un raffinement sémantique optionnel, protégé par des gardes cross-provider.
 
-## 5. Base et interface
+La politique est conservatrice : un faux négatif, qui conserve deux cartes
+possiblement équivalentes, est préférable à un faux positif qui masquerait ou
+fusionnerait abusivement deux offres. Un score sémantique n'est jamais un filtre
+destructif.
+
+Les rapprochements cross-provider ne deviennent pas une identité persistante.
+Ils restent une projection calculée qui peut évoluer et être recalculée.
+
+## Choix du représentant
+
+Careerjet utilise actuellement `fragment_size=10000` et peut porter un contenu
+SEARCH riche, de complétude technique `UNKNOWN`. Il peut représenter une offre
+lorsqu'il est la seule observation disponible. Lorsqu'un groupe contient une
+observation équivalente non-Careerjet, Careerjet reste persisté mais n'est pas
+choisi comme représentant.
+
+Aucune priorité globale supplémentaire ne départage France Travail, Adzuna et
+HelloWork. Cette règle de représentation reste indépendante de l'identité et de
+la conservation des lignes.
+
+## Base et interface
 
 ```text
-Base SQLite            → conserve les observations fournisseur
-Interface et API       → présentent une liste dédupliquée
+Base SQLite      -> conserve les observations fournisseur
+Interface et API -> présentent une projection dédupliquée
 ```
 
-La version affichée d'une offre n'est donc pas la seule version disponible en
-base.
+La version affichée n'est donc pas la seule version disponible en base. Les
+`alternates` actuels restent une compatibilité transitoire ; une éventuelle
+`GroupProjection` est **FUTURE** et son contrat n'est pas figé.
 
-## 6. Pourquoi cette fondation est nécessaire pour les candidatures
+## Raccord avec la préparation
 
-Pour analyser une annonce et préparer une lettre de motivation, Jobify ne doit
-pas dépendre uniquement de l'observation choisie pour afficher une carte. Cette
-fondation permettra de :
+Chaque observation persistée porte désormais un `OfferContent` non destructif.
+Son texte effectif est évalué à la demande, puis le flux de préparation décide
+s'il faut acquérir un DETAIL fournisseur ou demander un texte utilisateur :
 
-- comparer plusieurs contenus disponibles ;
-- conserver une version riche lorsqu'elle existe ;
-- récupérer éventuellement un détail plus complet ;
-- empêcher qu'un contenu pauvre remplace un contenu meilleur ;
-- prendre en compte un texte fourni manuellement par l'utilisateur ;
-- sélectionner le contenu le plus pertinent avant l'analyse de l'offre.
+```text
+OfferContent -> OfferContentEvaluator -> préparation
+```
 
-Elle ne met pas encore en œuvre la génération de candidature.
+Voir [l'architecture du contenu](./offer-content-architecture.md) pour le modèle
+et l'évaluation, puis le [flux de préparation](./offer-preparation-flow.md) pour
+l'orchestration serveur, desktop et Electron.
 
-## 7. Prochaine étape
-
-La prochaine étape architecturale est `OfferContent`, un modèle prévu autour de
-trois notions :
-
-- `automaticText` pour le meilleur texte acquis automatiquement ;
-- `userText` pour un éventuel texte fourni par l'utilisateur ;
-- `structured` pour les données structurées utiles de l'annonce.
-
-Ses règles de merge devront être non destructives afin qu'une nouvelle donnée
-plus pauvre ne dégrade pas un contenu déjà acquis. `OfferContent` et la future
-`GroupProjection` ne sont pas encore implémentés ; les `alternates` actuels
-restent un mécanisme legacy et transitoire.
-
-La [documentation d'architecture](./offer-content-architecture.md) reste la
-source normative pour les décisions et détails techniques.
+`OfferAnalyzer`, `ApplicationBrief` et la génération de candidature restent
+**FUTURE**.
