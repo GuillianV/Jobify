@@ -303,6 +303,7 @@ test("real validator rejects invalid model outputs globally without retry", asyn
 });
 
 test("successful result is exact and does not mutate offer, input or raw output", async () => {
+  assert.equal(OfferAnalyzerConstants.POLICY_VERSION, "offer-analyzer-v2");
   const harness = createHarness();
   const offerBefore = structuredClone(harness.offer);
   const inputBefore = structuredClone(harness.input);

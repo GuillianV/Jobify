@@ -188,10 +188,18 @@ fait de retry.
 
 ## Prompt et frontière non fiable — IMPLEMENTED
 
-`OfferAnalyzerPrompt` décrit le contrat strict, les enums, les limites, les
-règles d'absence, la factualité conservatrice et les preuves exactes. Les
-exigences, le mode de travail et les contraintes y restent exclusivement
-explicites. Le boilerplate est ignoré sans nettoyage destructif préalable.
+Le schéma de données reste `offer-analysis-schema-v1`, tandis que la politique
+Analyzer devient `offer-analyzer-v2`. Ce changement de provenance distingue la
+restructuration matérielle du prompt et de ses règles d'interprétation sans
+modifier ni assouplir le validator.
+
+`OfferAnalyzerPrompt` présente désormais séparément le contrat de sortie, les
+enums fermés sensibles à la casse, les limites et le contrôle final silencieux.
+Les exigences, le mode de travail et les contraintes restent exclusivement
+explicites. La preuve conserve exactement son contrat V1. La politique renforce
+également l'omission des exigences seulement déduites, réserve `TEAM` aux vraies
+informations d'équipe et adopte une séniorité conservatrice. Le boilerplate est
+ignoré sans nettoyage destructif préalable. Aucun repair retry n'est ajouté.
 
 Le user prompt sérialise un objet JSON séparant `deterministicContext` et
 `untrustedOfferText`. Le contexte contient uniquement titre, entreprise,
@@ -226,19 +234,22 @@ invalide intervient avant ce validator et ne reçoit donc aucun
 
 Le résultat en mémoire contient l'instance validée, le snapshot, l'origine du
 contenu, les deux empreintes et la provenance analyzer
-`offer-analyzer-v1`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
+`offer-analyzer-v2`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
 de cache ou métadonnée persistée.
 
 ## Étapes futures
 
 Les éléments suivants restent **FUTURE** :
 
+- une recalibration first-pass de la politique V2 sur six nouvelles offres
+  `READY`, choisies selon les sources réellement disponibles, avec une offre
+  utilisateur sûre lorsqu'il en existe une ;
 - **7C** : correction du fallback de modèle vide dans `AppConfig`, wiring
   runtime, cache, persistance, single-flight, date d'analyse persistée,
   controller, route et endpoint serveur ;
 - **7D** : orchestration et affichage desktop ;
 - `ApplicationBrief`, profil candidat, comparaison et génération de documents.
 
-Après 7B, Jobify sait produire et vérifier une analyse en mémoire par
-instanciation directe du service. Aucun consommateur API ou desktop n'est
-encore câblé.
+La recalibration V2 reste obligatoire avant de commencer 7C. Après 7B, Jobify
+sait produire et vérifier une analyse en mémoire par instanciation directe du
+service. Aucun consommateur API ou desktop n'est encore câblé.
