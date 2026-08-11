@@ -9,10 +9,25 @@ Avant toute intervention, lire et respecter `CLAUDE.md`. Il constitue la source 
 - Utiliser Node.js 24.
 - Limiter les modifications aux fichiers strictement nécessaires à la tâche demandée.
 - Ne pas reformater ou modifier du code sans rapport avec la tâche.
-- Ne jamais lire, afficher ou modifier `server/.env`.
-- Utiliser uniquement `server/.env.example` pour connaître les noms des variables d’environnement.
-- Ne jamais révéler de clé, jeton, identifiant ou autre secret.
 - Ne jamais écraser ou supprimer des modifications existantes sans accord explicite.
+
+## Secrets et fichiers d’environnement
+
+- Traiter `server/.env` et tout fichier d’environnement contenant des secrets comme sensibles.
+- Ne pas lire `server/.env` par défaut. Utiliser uniquement `server/.env.example` pour connaître les noms des variables d’environnement.
+- Ne jamais afficher, imprimer, citer, dumper, journaliser, commiter, modifier ou exposer le contenu de `server/.env`.
+- Ne jamais inclure de valeur secrète dans un prompt, rapport, erreur, sortie de test, fichier temporaire, commit ou documentation.
+- Ne jamais utiliser `cat`, `type`, `Get-Content`, `grep`, `rg` ou une commande équivalente d’une manière qui afficherait des valeurs secrètes.
+- Exception : lorsque l’utilisateur autorise explicitement l’accès pour la tâche en cours et qu’un secret local est requis pour l’exécuter, Codex peut lire uniquement les variables spécifiquement nécessaires depuis `server/.env`.
+- Sous cette autorisation explicite :
+  - charger uniquement les variables requises ;
+  - conserver leurs valeurs uniquement dans la mémoire du processus ;
+  - ne jamais afficher une partie d’un secret, y compris sa longueur, son préfixe, son suffixe ou son hash ;
+  - limiter toute confirmation visible à la présence ou l’absence de la variable requise ;
+  - ne jamais modifier `server/.env` ;
+  - ne jamais persister le secret ailleurs.
+- L’autorisation est spécifique à la tâche et n’accorde aucun accès pour un travail sans rapport.
+- Ne jamais révéler de clé, jeton, identifiant ou autre secret.
 
 ## Dépendances et fichiers générés
 
