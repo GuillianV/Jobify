@@ -1,19 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { ContractBadge } from "./ContractBadge.jsx";
 import { formatSalary, formatDateTime, openExternal } from "./format.js";
-import {
-  acquireOfferDetail,
-  shouldAcquireOfferDetail,
-} from "../services/offerContentAcquisition.js";
+import { OfferPreparationConstants } from "../constants/OfferPreparationConstants.js";
+import { isValidUserTextDraft } from "../services/OfferPreparationOrchestrator.js";
 
 const UNKNOWN_COMPANY = "Entreprise non précisée";
 const NO_DESCRIPTION = "Pas de description fournie par la source.";
-const LOADING_DESCRIPTION = "Chargement de la description…";
 const TRUNCATION_MARKERS = ["…", "..."];
 
 /**
  * Tell whether a description was truncated by its source, based on a trailing
- * ellipsis. Some sources (Adzuna) only expose a shortened description.
+ * ellipsis. Some sources only expose a shortened description.
  * @param {string|null} description - The offer description.
  * @returns {boolean} True when the description looks truncated.
  */
@@ -28,18 +25,44 @@ function isTruncated(description) {
 }
 
 /**
- * Modal presenting the full detail of a single offer: complete description,
- * publication date and time, and a button opening the original posting.
+ * Resolve the explicit retry label for the current failed operation.
+ * @param {string|null} retryKind - Stable retry operation kind.
+ * @returns {string} User-facing retry label.
+ */
+function getRetryLabel(retryKind) {
+  if (retryKind === OfferPreparationConstants.RETRY_KIND.PROVIDER) {
+    return "Réessayer la récupération";
+  }
+  if (retryKind === OfferPreparationConstants.RETRY_KIND.PERSIST_PROVIDER) {
+    return "Réessayer l'enregistrement du contenu récupéré";
+  }
+  if (retryKind === OfferPreparationConstants.RETRY_KIND.USER_TEXT) {
+    return "Réessayer l'enregistrement du texte";
+  }
+  return "Réessayer la préparation";
+}
+
+/**
+ * Modal presenting one offer and controlled preparation actions.
  * @param {object} props - Component properties.
  * @param {object} props.offer - The normalized offer to display.
+ * @param {object} props.preparationState - Controlled preparation UI state.
  * @param {Function} props.onClose - Called when the modal should close.
- * @param {Function} props.onEnrich - Persists DETAIL and updates the parent offer.
+ * @param {Function} props.onPrepare - Starts explicit preparation.
+ * @param {Function} props.onSubmitUserText - Submits the controlled user text.
+ * @param {Function} props.onUserTextDraftChange - Updates the controlled draft.
+ * @param {Function} props.onRetry - Retries the current failed operation.
  * @returns {JSX.Element} The rendered modal.
  */
-function OfferDetail({ offer, onClose, onEnrich }) {
-  const [detail, setDetail] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-
+function OfferDetail({
+  offer,
+  preparationState,
+  onClose,
+  onPrepare,
+  onSubmitUserText,
+  onUserTextDraftChange,
+  onRetry,
+}) {
   useEffect(() => {
     const handleKey = (event) => {
       if (event.key === "Escape") {
@@ -52,40 +75,8 @@ function OfferDetail({ offer, onClose, onEnrich }) {
     };
   }, [onClose]);
 
-  useEffect(() => {
-    setDetail(null);
-    const fetchDetail = window.jobify?.fetchOfferDetail;
-    const canEnrich = shouldAcquireOfferDetail(offer, fetchDetail);
-    if (!canEnrich) {
-      return undefined;
-    }
-    let cancelled = false;
-    setDetailLoading(true);
-    acquireOfferDetail(offer, fetchDetail, onEnrich)
-      .then((enriched) => {
-        if (cancelled) {
-          return;
-        }
-        if (enriched) {
-          setDetail(enriched);
-        }
-        setDetailLoading(false);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDetailLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [offer, onEnrich]);
-
-  const effectiveDescription = detail?.description ?? offer.description;
-  const effectiveSalary = detail?.salary ?? offer.salary;
-  const effectivePublishedAt = detail?.publishedAt ?? offer.publishedAt;
-  const salary = formatSalary(effectiveSalary);
-  const publishedAt = formatDateTime(effectivePublishedAt);
+  const salary = formatSalary(offer.salary);
+  const publishedAt = formatDateTime(offer.publishedAt);
   const company = offer.company?.name ?? UNKNOWN_COMPANY;
   const city = offer.location?.city ?? offer.location?.label ?? "";
   const handleOpen = () => {
@@ -143,17 +134,106 @@ function OfferDetail({ offer, onClose, onEnrich }) {
         ) : null}
 
         <section className="mt-4 max-h-96 overflow-y-auto whitespace-pre-line text-sm leading-relaxed text-body">
-          {effectiveDescription ? effectiveDescription : null}
-          {!effectiveDescription && detailLoading ? LOADING_DESCRIPTION : null}
-          {!effectiveDescription && !detailLoading ? NO_DESCRIPTION : null}
+          {offer.description || NO_DESCRIPTION}
         </section>
 
-        {isTruncated(effectiveDescription) ? (
+        {isTruncated(offer.description) ? (
           <p className="mt-2 text-xs italic text-muted">
             Description raccourcie par la source. Le texte complet est
             disponible sur l'annonce d'origine.
           </p>
         ) : null}
+
+        <section className="mt-6 rounded-xl border border-border bg-surface p-4">
+          {preparationState.uiStatus === OfferPreparationConstants.UI_STATUS.IDLE ? (
+            <button
+              type="button"
+              onClick={onPrepare}
+              className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-500"
+            >
+              Préparer ma candidature
+            </button>
+          ) : null}
+
+          {preparationState.uiStatus === OfferPreparationConstants.UI_STATUS.PREPARING ? (
+            <p className="text-sm text-muted">Préparation du contenu en cours…</p>
+          ) : null}
+
+          {preparationState.uiStatus
+            === OfferPreparationConstants.UI_STATUS.ACQUIRING_PROVIDER_CONTENT ? (
+              <p className="text-sm text-muted">Récupération du contenu complet en cours…</p>
+            ) : null}
+
+          {preparationState.uiStatus === OfferPreparationConstants.UI_STATUS.READY ? (
+            <p className="text-sm font-medium text-brand-700 dark:text-brand-300">
+              Le contenu de cette offre est suffisamment complet pour préparer la candidature.
+            </p>
+          ) : null}
+
+          {preparationState.uiStatus === OfferPreparationConstants.UI_STATUS.ERROR ? (
+            <div className="space-y-3">
+              <p className="text-sm text-danger">{preparationState.error?.message}</p>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-lg border border-brand-500 px-4 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-500 hover:text-white dark:text-brand-300"
+              >
+                {getRetryLabel(preparationState.retryKind)}
+              </button>
+            </div>
+          ) : null}
+
+          {preparationState.uiStatus === OfferPreparationConstants.UI_STATUS.NEEDS_USER_TEXT ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted">
+                Le contenu disponible n'est pas assez complet. Collez le texte complet de
+                l'annonce pour le faire réévaluer.
+              </p>
+              {preparationState.retryKind === OfferPreparationConstants.RETRY_KIND.PROVIDER
+                && !preparationState.error ? (
+                  <p className="text-sm text-muted">
+                    Le contenu complet n'a pas pu être récupéré automatiquement.
+                  </p>
+                ) : null}
+              {preparationState.error ? (
+                <p className="text-sm text-danger">{preparationState.error.message}</p>
+              ) : null}
+              {preparationState.retryKind ? (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="rounded-lg border border-brand-500 px-4 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-500 hover:text-white dark:text-brand-300"
+                >
+                  {getRetryLabel(preparationState.retryKind)}
+                </button>
+              ) : null}
+              <textarea
+                value={preparationState.userTextDraft}
+                onChange={(event) => {
+                  onUserTextDraftChange(event.target.value);
+                }}
+                rows="8"
+                className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm outline-none focus:border-brand-500"
+                placeholder="Collez ici le texte complet de l'annonce"
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-muted">
+                  {preparationState.userTextDraft.length} /{
+                    OfferPreparationConstants.MAXIMUM_USER_TEXT_LENGTH
+                  }
+                </span>
+                <button
+                  type="button"
+                  onClick={onSubmitUserText}
+                  disabled={!isValidUserTextDraft(preparationState.userTextDraft)}
+                  className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Enregistrer et réévaluer
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
 
         <div className="mt-6 flex justify-end">
           <button

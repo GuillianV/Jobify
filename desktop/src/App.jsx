@@ -2,13 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { OfferCard } from "./components/OfferCard.jsx";
 import { OfferDetail } from "./components/OfferDetail.jsx";
 import { DISTANCE_OPTIONS_KM, DEFAULT_DISTANCE_KM } from "./constants/searchFilters.js";
-import { applyEnrichedOffer } from "./services/offerContentAcquisition.js";
+import {
+  acquireProviderContent,
+  applyEnrichedOffer,
+} from "./services/offerContentAcquisition.js";
+import {
+  persistProviderContent,
+  prepareOffer,
+  submitUserContent,
+} from "./services/offerPreparation.js";
+import {
+  createPreparationState,
+  OfferPreparationOrchestrator,
+} from "./services/OfferPreparationOrchestrator.js";
 import { claimInitialSearch, runLatestSearch } from "./services/searchOrchestration.js";
 
 const SERVER_URL = "http://localhost:3001";
 const OFFERS_ENDPOINT = "/api/offres";
 const PROFILES_ENDPOINT = "/api/profils";
-const OFFER_CONTENT_PATH = "/contenu";
 const STATUS_LOADING = "loading";
 const STATUS_OK = "ok";
 const STATUS_ERROR = "error";
@@ -85,27 +96,6 @@ async function fetchOffers(searchKeywords, searchCity, searchDistanceKm, scraped
 }
 
 /**
- * Persist Electron-acquired DETAIL content for one authoritative observation id.
- * @param {number} id - Persistent observation id.
- * @param {object} detail - Electron DETAIL fields.
- * @returns {Promise<object>} Enriched API offer.
- */
-async function persistOfferDetail(id, detail) {
-  const payload = await requestJson(
-    `${SERVER_URL}${OFFERS_ENDPOINT}/${id}${OFFER_CONTENT_PATH}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        description: detail.description,
-        sourceUrl: detail.sourceUrl,
-      }),
-    },
-  );
-  return payload.offre;
-}
-
-/**
  * Fetch the saved search profiles from the server.
  * @returns {Promise<object[]>} The saved profiles.
  */
@@ -151,9 +141,50 @@ function App() {
   const [status, setStatus] = useState(STATUS_LOADING);
   const [error, setError] = useState(null);
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const [preparationState, setPreparationState] = useState(() => {
+    return createPreparationState();
+  });
   const [profiles, setProfiles] = useState([]);
   const didRunInitialSearch = useRef(false);
   const searchRequestId = useRef(0);
+  const preparationRequestIdRef = useRef(0);
+  const preparationInFlightRef = useRef(false);
+  const selectedOfferIdRef = useRef(null);
+  const preparationStateRef = useRef(preparationState);
+  const preparationOrchestratorRef = useRef(null);
+
+  const updatePreparationState = useCallback((update) => {
+    const current = preparationStateRef.current;
+    const next = typeof update === "function" ? update(current) : update;
+    preparationStateRef.current = next;
+    setPreparationState(next);
+  }, []);
+
+  const applyPreparedOffer = useCallback((offer) => {
+    applyEnrichedOffer(offer, setOffers, setSelectedOffer);
+  }, []);
+
+  if (!preparationOrchestratorRef.current) {
+    preparationOrchestratorRef.current = new OfferPreparationOrchestrator({
+      prepareOffer,
+      submitUserContent,
+      persistProviderContent,
+      acquireProviderContent,
+      fetchDetail(instruction) {
+        return window.jobify?.fetchOfferDetail?.(instruction);
+      },
+      applyOffer: applyPreparedOffer,
+      updateState: updatePreparationState,
+      getState() {
+        return preparationStateRef.current;
+      },
+      getSelectedOfferId() {
+        return selectedOfferIdRef.current;
+      },
+      requestIdRef: preparationRequestIdRef,
+      inFlightRef: preparationInFlightRef,
+    });
+  }
 
   const runSearch = useCallback(async (searchKeywords, searchCity, searchDistanceKm) => {
     await runLatestSearch({
@@ -216,10 +247,32 @@ function App() {
     }
   };
 
-  const handleEnrichOffer = useCallback(async (id, detail) => {
-    const enriched = await persistOfferDetail(id, detail);
-    applyEnrichedOffer(enriched, setOffers, setSelectedOffer);
-    return enriched;
+  const handleSelectOffer = useCallback((offer) => {
+    selectedOfferIdRef.current = offer.id;
+    setSelectedOffer(offer);
+    preparationOrchestratorRef.current.openOffer(offer.id);
+  }, []);
+
+  const handleCloseOffer = useCallback(() => {
+    selectedOfferIdRef.current = null;
+    setSelectedOffer(null);
+    preparationOrchestratorRef.current.closeOffer();
+  }, []);
+
+  const handlePrepareOffer = useCallback(() => {
+    return preparationOrchestratorRef.current.prepare();
+  }, []);
+
+  const handleUserTextDraftChange = useCallback((text) => {
+    preparationOrchestratorRef.current.updateUserTextDraft(text);
+  }, []);
+
+  const handleSubmitUserText = useCallback(() => {
+    return preparationOrchestratorRef.current.submitUserText();
+  }, []);
+
+  const handlePreparationRetry = useCallback(() => {
+    return preparationOrchestratorRef.current.retry();
   }, []);
 
   const offerPlural = offers.length > 1 ? "s" : "";
@@ -344,7 +397,7 @@ function App() {
                     <OfferCard
                       key={offer.id}
                       offer={offer}
-                      onSelect={setSelectedOffer}
+                      onSelect={handleSelectOffer}
                     />
                   );
                 })}
@@ -357,10 +410,12 @@ function App() {
       {selectedOffer ? (
         <OfferDetail
           offer={selectedOffer}
-          onClose={() => {
-            setSelectedOffer(null);
-          }}
-          onEnrich={handleEnrichOffer}
+          preparationState={preparationState}
+          onClose={handleCloseOffer}
+          onPrepare={handlePrepareOffer}
+          onSubmitUserText={handleSubmitUserText}
+          onUserTextDraftChange={handleUserTextDraftChange}
+          onRetry={handlePreparationRetry}
         />
       ) : null}
     </div>

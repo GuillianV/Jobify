@@ -1,29 +1,33 @@
 /**
- * Tell whether the current API observation requires HelloWork DETAIL acquisition.
- * @param {object} offer - API offer.
+ * Execute one authoritative provider instruction through the Electron bridge.
+ * @param {unknown} providerAcquisition - Server-provided acquisition instruction.
  * @param {Function|undefined} fetchDetail - Electron DETAIL bridge.
- * @returns {boolean} True when acquisition can be attempted.
+ * @returns {Promise<object>} Canonical ACQUIRED, NOT_FOUND or FAILED result.
  */
-function shouldAcquireOfferDetail(offer, fetchDetail) {
-  return Number.isSafeInteger(offer?.id)
-    && !offer.description
-    && Boolean(offer.applyUrl)
-    && typeof fetchDetail === "function";
-}
-
-/**
- * Acquire provider DETAIL and persist it through the authoritative server API.
- * @param {object} offer - API offer to enrich.
- * @param {Function} fetchDetail - Electron DETAIL bridge.
- * @param {Function} persistDetail - Server persistence callback.
- * @returns {Promise<object|null>} Enriched API offer or null when DETAIL is absent.
- */
-async function acquireOfferDetail(offer, fetchDetail, persistDetail) {
-  const detail = await fetchDetail({ source: offer.source, url: offer.applyUrl });
-  if (!detail) {
-    return null;
+async function acquireProviderContent(providerAcquisition, fetchDetail) {
+  if (!isProviderAcquisition(providerAcquisition) || typeof fetchDetail !== "function") {
+    return { status: OfferPreparationConstants.IPC_STATUS.FAILED };
   }
-  return persistDetail(offer.id, detail);
+  try {
+    const result = await fetchDetail(providerAcquisition);
+    if (result?.status === OfferPreparationConstants.IPC_STATUS.ACQUIRED
+      && typeof result.detail?.description === "string"
+      && typeof result.detail?.sourceUrl === "string") {
+      return {
+        status: OfferPreparationConstants.IPC_STATUS.ACQUIRED,
+        detail: {
+          description: result.detail.description,
+          sourceUrl: result.detail.sourceUrl,
+        },
+      };
+    }
+    if (result?.status === OfferPreparationConstants.IPC_STATUS.NOT_FOUND) {
+      return { status: OfferPreparationConstants.IPC_STATUS.NOT_FOUND };
+    }
+    return { status: OfferPreparationConstants.IPC_STATUS.FAILED };
+  } catch {
+    return { status: OfferPreparationConstants.IPC_STATUS.FAILED };
+  }
 }
 
 /**
@@ -55,8 +59,9 @@ function applyEnrichedOffer(enriched, setOffers, setSelectedOffer) {
 }
 
 export {
-  acquireOfferDetail,
+  acquireProviderContent,
   applyEnrichedOffer,
   replaceOfferById,
-  shouldAcquireOfferDetail,
 };
+import { OfferPreparationConstants } from "../constants/OfferPreparationConstants.js";
+import { isProviderAcquisition } from "./offerPreparation.js";

@@ -2,7 +2,10 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const { WindowConfig } = require("./WindowConfig.cjs");
 const { HelloWorkScraper } = require("./scrapers/HelloWorkScraper.cjs");
-const { HelloWorkConfig } = require("./scrapers/HelloWorkConfig.cjs");
+const { HelloWorkUrlPolicy } = require("./scrapers/HelloWorkUrlPolicy.cjs");
+const {
+  HelloWorkDetailAcquisition,
+} = require("./scrapers/HelloWorkDetailAcquisition.cjs");
 
 const NO_OPEN_WINDOWS = 0;
 const OPEN_EXTERNAL_CHANNEL = "jobify:open-external";
@@ -66,7 +69,12 @@ class ElectronApplication {
    */
   constructor() {
     this.mainWindow = new MainWindow();
-    this.helloWorkScraper = new HelloWorkScraper();
+    const helloWorkUrlPolicy = new HelloWorkUrlPolicy();
+    this.helloWorkScraper = new HelloWorkScraper({ urlPolicy: helloWorkUrlPolicy });
+    this.helloWorkDetailAcquisition = new HelloWorkDetailAcquisition(
+      this.helloWorkScraper,
+      helloWorkUrlPolicy,
+    );
   }
 
   /**
@@ -104,15 +112,7 @@ class ElectronApplication {
       }
     });
     ipcMain.handle(FETCH_DETAIL_CHANNEL, async (event, request) => {
-      try {
-        if (request.source === HelloWorkConfig.SOURCE) {
-          return await this.helloWorkScraper.fetchDetail(request.url);
-        }
-        return null;
-      } catch (error) {
-        console.warn(`Offer detail fetch failed: ${error.message}`);
-        return null;
-      }
+      return this.helloWorkDetailAcquisition.acquire(request);
     });
   }
 

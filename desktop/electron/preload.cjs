@@ -7,9 +7,10 @@ const FETCH_DETAIL_CHANNEL = "jobify:fetch-offer-detail";
 
 /**
  * Exposes a controlled, secure API from the Electron main process to the
- * renderer through the context bridge. Opening external links is delegated to
- * the main process over IPC, because the shell module is not available in a
- * sandboxed preload.
+ * renderer through the context bridge. Provider DETAIL acquisition returns a
+ * discriminated result without exposing Electron errors. Opening external
+ * links is delegated to the main process over IPC, because the shell module is
+ * not available in a sandboxed preload.
  */
 class PreloadBridge {
   /**
