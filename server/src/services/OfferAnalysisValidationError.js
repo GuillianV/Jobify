@@ -23,21 +23,34 @@ class OfferAnalysisValidationError extends TypeError {
     EXPLICIT_EVIDENCE_TEXT_NOT_FOUND: "EXPLICIT_EVIDENCE_TEXT_NOT_FOUND",
   });
 
+  static ENUM_SUBCODE = Object.freeze({
+    SENIORITY_LEVEL: "SENIORITY_LEVEL",
+    REQUIREMENT_CATEGORY: "REQUIREMENT_CATEGORY",
+    REQUIREMENT_IMPORTANCE: "REQUIREMENT_IMPORTANCE",
+    CONTEXT_CATEGORY: "CONTEXT_CATEGORY",
+    WORK_MODE: "WORK_MODE",
+    CONSTRAINT_CATEGORY: "CONSTRAINT_CATEGORY",
+    ASSERTION: "ASSERTION",
+  });
+
   /**
    * Create a categorized contract violation with a controlled safe code.
    * @param {object} details - Validation failure details.
    * @param {string} details.validationCode - Closed safe validation category.
-   * @param {string} [details.validationSubcode] - Closed safe evidence rule.
+   * @param {string} [details.validationSubcode] - Closed safe evidence or enum rule.
    * @param {string} details.message - Internal contract violation description.
    */
   constructor({ validationCode, validationSubcode, message }) {
     if (!Object.values(OfferAnalysisValidationError.CODE).includes(validationCode)) {
       throw new TypeError("Unknown OfferAnalysis validation code");
     }
-    if (validationSubcode !== undefined
-      && (validationCode !== OfferAnalysisValidationError.CODE.EVIDENCE
-        || !Object.values(OfferAnalysisValidationError.EVIDENCE_SUBCODE)
-          .includes(validationSubcode))) {
+    const hasEvidenceSubcode = validationCode === OfferAnalysisValidationError.CODE.EVIDENCE
+      && Object.values(OfferAnalysisValidationError.EVIDENCE_SUBCODE)
+        .includes(validationSubcode);
+    const hasEnumSubcode = validationCode === OfferAnalysisValidationError.CODE.ENUM
+      && Object.values(OfferAnalysisValidationError.ENUM_SUBCODE)
+        .includes(validationSubcode);
+    if (validationSubcode !== undefined && !hasEvidenceSubcode && !hasEnumSubcode) {
       throw new TypeError("Unknown OfferAnalysis validation subcode");
     }
     super(message);

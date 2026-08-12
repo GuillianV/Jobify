@@ -111,7 +111,12 @@ class OfferAnalysisValidator {
       });
     }
     for (const level of seniority.levels) {
-      this.requireEnum(level, OfferAnalysisConstants.SENIORITY_LEVEL, "seniority level");
+      this.requireEnum(
+        level,
+        OfferAnalysisConstants.SENIORITY_LEVEL,
+        "seniority level",
+        OfferAnalysisValidationError.ENUM_SUBCODE.SENIORITY_LEVEL,
+      );
     }
     this.validateAssertionStructure(seniority.assertion, seniority.evidence, true);
   }
@@ -139,11 +144,13 @@ class OfferAnalysisValidator {
       item.category,
       OfferAnalysisConstants.REQUIREMENT_CATEGORY,
       "requirement category",
+      OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_CATEGORY,
     );
     this.requireEnum(
       item.importance,
       OfferAnalysisConstants.REQUIREMENT_IMPORTANCE,
       "requirement importance",
+      OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_IMPORTANCE,
     );
     this.validateSyntheticString(
       item.value,
@@ -166,7 +173,12 @@ class OfferAnalysisValidator {
    */
   validateContextStructure(item) {
     this.requireExactObject(item, CATEGORIZED_ITEM_KEYS, "context item");
-    this.requireEnum(item.category, OfferAnalysisConstants.CONTEXT_CATEGORY, "context category");
+    this.requireEnum(
+      item.category,
+      OfferAnalysisConstants.CONTEXT_CATEGORY,
+      "context category",
+      OfferAnalysisValidationError.ENUM_SUBCODE.CONTEXT_CATEGORY,
+    );
     this.validateSyntheticString(
       item.value,
       OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH,
@@ -203,7 +215,12 @@ class OfferAnalysisValidator {
       return;
     }
     this.requireExactObject(workMode, WORK_MODE_KEYS, "workMode");
-    this.requireEnum(workMode.mode, OfferAnalysisConstants.WORK_MODE, "work mode");
+    this.requireEnum(
+      workMode.mode,
+      OfferAnalysisConstants.WORK_MODE,
+      "work mode",
+      OfferAnalysisValidationError.ENUM_SUBCODE.WORK_MODE,
+    );
     if (workMode.detail !== null) {
       this.validateSyntheticString(
         workMode.detail,
@@ -231,6 +248,7 @@ class OfferAnalysisValidator {
       item.category,
       OfferAnalysisConstants.CONSTRAINT_CATEGORY,
       "constraint category",
+      OfferAnalysisValidationError.ENUM_SUBCODE.CONSTRAINT_CATEGORY,
     );
     this.validateSyntheticString(
       item.value,
@@ -254,7 +272,12 @@ class OfferAnalysisValidator {
    * @returns {void}
    */
   validateAssertionStructure(assertion, evidence, allowInferred) {
-    this.requireEnum(assertion, OfferAnalysisConstants.ASSERTION, "assertion");
+    this.requireEnum(
+      assertion,
+      OfferAnalysisConstants.ASSERTION,
+      "assertion",
+      OfferAnalysisValidationError.ENUM_SUBCODE.ASSERTION,
+    );
     if (!allowInferred && assertion === OfferAnalysisConstants.ASSERTION.INFERRED) {
       throw new OfferAnalysisValidationError({
         validationCode: OfferAnalysisValidationError.CODE.ASSERTION,
@@ -462,12 +485,14 @@ class OfferAnalysisValidator {
    * @param {unknown} value - Enum candidate.
    * @param {object} enumObject - Supported enum values.
    * @param {string} label - Diagnostic label.
+   * @param {string} enumSubcode - Closed safe enum family.
    * @returns {void}
    */
-  requireEnum(value, enumObject, label) {
+  requireEnum(value, enumObject, label, enumSubcode) {
     if (!Object.values(enumObject).includes(value)) {
       throw new OfferAnalysisValidationError({
         validationCode: OfferAnalysisValidationError.CODE.ENUM,
+        validationSubcode: enumSubcode,
         message: `Unsupported ${label}`,
       });
     }

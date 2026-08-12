@@ -78,6 +78,11 @@ class OfferAnalyzerService {
           .includes(error.validationSubcode)) {
         safeDetails.validationSubcode = error.validationSubcode;
       }
+      if (error.validationCode === OfferAnalysisValidationError.CODE.ENUM
+        && Object.values(OfferAnalysisValidationError.ENUM_SUBCODE)
+          .includes(error.validationSubcode)) {
+        safeDetails.validationSubcode = error.validationSubcode;
+      }
       throw new OfferAnalyzerError(
         OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
         safeDetails,

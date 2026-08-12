@@ -205,6 +205,16 @@ test("validation codes form the exact closed safe taxonomy", () => {
     "EXPLICIT_EVIDENCE_TEXT_NOT_FOUND",
   ]);
   assert.equal(Object.isFrozen(OfferAnalysisValidationError.EVIDENCE_SUBCODE), true);
+  assert.deepEqual(Object.values(OfferAnalysisValidationError.ENUM_SUBCODE), [
+    "SENIORITY_LEVEL",
+    "REQUIREMENT_CATEGORY",
+    "REQUIREMENT_IMPORTANCE",
+    "CONTEXT_CATEGORY",
+    "WORK_MODE",
+    "CONSTRAINT_CATEGORY",
+    "ASSERTION",
+  ]);
+  assert.equal(Object.isFrozen(OfferAnalysisValidationError.ENUM_SUBCODE), true);
 
   const historical = new OfferAnalysisValidationError({
     validationCode: OfferAnalysisValidationError.CODE.ENUM,
@@ -221,6 +231,14 @@ test("validation codes form the exact closed safe taxonomy", () => {
     evidence.validationSubcode,
     OfferAnalysisValidationError.EVIDENCE_SUBCODE.EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
   );
+  for (const validationSubcode of Object.values(OfferAnalysisValidationError.ENUM_SUBCODE)) {
+    const enumError = new OfferAnalysisValidationError({
+      validationCode: OfferAnalysisValidationError.CODE.ENUM,
+      validationSubcode,
+      message: "controlled error",
+    });
+    assert.equal(enumError.validationSubcode, validationSubcode);
+  }
   for (const invalid of [
     {
       validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
@@ -230,6 +248,18 @@ test("validation codes form the exact closed safe taxonomy", () => {
       validationCode: OfferAnalysisValidationError.CODE.ENUM,
       validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
         .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+    },
+    {
+      validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+      validationSubcode: OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_CATEGORY,
+    },
+    {
+      validationCode: OfferAnalysisValidationError.CODE.STRUCTURE,
+      validationSubcode: OfferAnalysisValidationError.ENUM_SUBCODE.ASSERTION,
+    },
+    {
+      validationCode: OfferAnalysisValidationError.CODE.ENUM,
+      validationSubcode: "UNKNOWN_ENUM_SUBCODE",
     },
   ]) {
     assert.throws(() => {
@@ -241,6 +271,87 @@ test("validation codes form the exact closed safe taxonomy", () => {
       return error instanceof TypeError
         && !(error instanceof OfferAnalysisValidationError);
     });
+  }
+});
+
+test("every enum family receives its exact closed safe subcode", () => {
+  const sensitiveSentinel = "SENSITIVE_ENUM_CANDIDATE_SENTINEL";
+  const seniority = createMinimalAnalysis();
+  seniority.seniority = {
+    levels: [sensitiveSentinel],
+    assertion: OfferAnalysisConstants.ASSERTION.EXPLICIT,
+    evidence: { text: JAVA_EVIDENCE },
+  };
+  const requirementCategory = createMinimalAnalysis();
+  requirementCategory.requirements = [createRequirement("Java", sensitiveSentinel)];
+  const requirementImportance = createMinimalAnalysis();
+  requirementImportance.requirements = [createRequirement(
+    "Java",
+    OfferAnalysisConstants.REQUIREMENT_CATEGORY.TOOL_OR_TECHNOLOGY,
+    sensitiveSentinel,
+  )];
+  const contextCategory = createMinimalAnalysis();
+  contextCategory.context = [createCategorizedItem(sensitiveSentinel, "Team")];
+  const workMode = createMinimalAnalysis();
+  workMode.workConditions.workMode = {
+    mode: sensitiveSentinel,
+    detail: null,
+    assertion: OfferAnalysisConstants.ASSERTION.EXPLICIT,
+    evidence: { text: WORK_MODE_EVIDENCE },
+  };
+  const constraintCategory = createMinimalAnalysis();
+  constraintCategory.workConditions.constraints = [
+    createCategorizedItem(sensitiveSentinel, "Travel"),
+  ];
+  const assertion = createMinimalAnalysis();
+  assertion.activities[0].assertion = sensitiveSentinel;
+  const cases = [
+    [seniority, OfferAnalysisValidationError.ENUM_SUBCODE.SENIORITY_LEVEL],
+    [requirementCategory, OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_CATEGORY],
+    [requirementImportance, OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_IMPORTANCE],
+    [contextCategory, OfferAnalysisValidationError.ENUM_SUBCODE.CONTEXT_CATEGORY],
+    [workMode, OfferAnalysisValidationError.ENUM_SUBCODE.WORK_MODE],
+    [constraintCategory, OfferAnalysisValidationError.ENUM_SUBCODE.CONSTRAINT_CATEGORY],
+    [assertion, OfferAnalysisValidationError.ENUM_SUBCODE.ASSERTION],
+  ];
+  for (const [candidate, expectedSubcode] of cases) {
+    const error = captureValidationError(() => {
+      createValidator().validate(candidate, SOURCE_TEXT);
+    });
+    assert.equal(error.validationCode, OfferAnalysisValidationError.CODE.ENUM);
+    assert.equal(error.validationSubcode, expectedSubcode);
+    assert.equal(error.validationSubcode.includes(sensitiveSentinel), false);
+    assert.equal(error.message.includes(sensitiveSentinel), false);
+  }
+});
+
+test("explicit-only assertion priorities remain ahead of enum validation", () => {
+  const requirement = createMinimalAnalysis();
+  requirement.requirements = [createRequirement("Java")];
+  requirement.requirements[0].assertion = "SENSITIVE_ENUM_CANDIDATE_SENTINEL";
+  const workMode = createMinimalAnalysis();
+  workMode.workConditions.workMode = {
+    mode: OfferAnalysisConstants.WORK_MODE.HYBRID,
+    detail: null,
+    assertion: "SENSITIVE_ENUM_CANDIDATE_SENTINEL",
+    evidence: null,
+  };
+  const constraint = createMinimalAnalysis();
+  constraint.workConditions.constraints = [
+    createCategorizedItem(OfferAnalysisConstants.CONSTRAINT_CATEGORY.TRAVEL, "Travel"),
+  ];
+  constraint.workConditions.constraints[0].assertion = "SENSITIVE_ENUM_CANDIDATE_SENTINEL";
+  const cases = [
+    [requirement, OfferAnalysisValidationError.CODE.REQUIREMENT_INFERRED],
+    [workMode, OfferAnalysisValidationError.CODE.WORK_CONDITION_INFERRED],
+    [constraint, OfferAnalysisValidationError.CODE.WORK_CONDITION_INFERRED],
+  ];
+  for (const [candidate, expectedCode] of cases) {
+    const error = captureValidationError(() => {
+      createValidator().validate(candidate, SOURCE_TEXT);
+    });
+    assert.equal(error.validationCode, expectedCode);
+    assert.equal(Object.hasOwn(error, "validationSubcode"), false);
   }
 });
 

@@ -288,6 +288,7 @@ test("dedicated validation failures map without masking generic TypeErrors", asy
       validate() {
         throw new OfferAnalysisValidationError({
           validationCode: OfferAnalysisValidationError.CODE.ENUM,
+          validationSubcode: OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_CATEGORY,
           message: sensitiveSentinel,
         });
       },
@@ -295,6 +296,28 @@ test("dedicated validation failures map without masking generic TypeErrors", asy
   });
   const mappedEnum = await captureError(enumHarness.service.analyze(OFFER_ID));
   assert.deepEqual(mappedEnum.safeDetails, {
+    validationCode: OfferAnalysisValidationError.CODE.ENUM,
+    validationSubcode: OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_CATEGORY,
+  });
+  assert.equal(JSON.stringify(mappedEnum.safeDetails).includes(sensitiveSentinel), false);
+
+  const alteredEnumSubcodeHarness = createHarness({
+    analysisValidator: {
+      validate() {
+        const error = new OfferAnalysisValidationError({
+          validationCode: OfferAnalysisValidationError.CODE.ENUM,
+          validationSubcode: OfferAnalysisValidationError.ENUM_SUBCODE.REQUIREMENT_CATEGORY,
+          message: sensitiveSentinel,
+        });
+        error.validationSubcode = sensitiveSentinel;
+        throw error;
+      },
+    },
+  });
+  const mappedAlteredEnum = await captureError(
+    alteredEnumSubcodeHarness.service.analyze(OFFER_ID),
+  );
+  assert.deepEqual(mappedAlteredEnum.safeDetails, {
     validationCode: OfferAnalysisValidationError.CODE.ENUM,
   });
 

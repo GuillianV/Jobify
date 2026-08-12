@@ -235,10 +235,13 @@ sont pas masquées par ce mapping.
 
 `OfferAnalysisValidationError` associe chaque rejet à une catégorie fermée et
 sûre. Pour un rejet du validator, `OfferAnalyzerService` expose
-`validationCode` et, uniquement pour une branche `EVIDENCE` connue, un
-`validationSubcode` optionnel. Les quatre sous-codes fermés sont
+`validationCode` et, uniquement pour une branche `EVIDENCE` ou `ENUM` connue,
+un `validationSubcode` optionnel. Les quatre sous-codes `EVIDENCE` fermés sont
 `INFERRED_EVIDENCE_PRESENT`, `EXPLICIT_EVIDENCE_TEXT_INVALID`,
 `EXPLICIT_EVIDENCE_TEXT_TOO_LONG` et `EXPLICIT_EVIDENCE_TEXT_NOT_FOUND`.
+Les sous-codes `ENUM` fermés sont `SENIORITY_LEVEL`, `REQUIREMENT_CATEGORY`,
+`REQUIREMENT_IMPORTANCE`, `CONTEXT_CATEGORY`, `WORK_MODE`,
+`CONSTRAINT_CATEGORY` et `ASSERTION`.
 Aucune valeur candidate, preuve ou donnée source n'entre dans ces diagnostics.
 Le message et la cause restent internes. Une réponse Groq syntaxiquement
 invalide intervient avant ce validator et ne reçoit donc aucun diagnostic
