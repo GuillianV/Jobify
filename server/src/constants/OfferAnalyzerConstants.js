@@ -8,7 +8,11 @@ class OfferAnalyzerConstants {
 
   static MAX_INPUT_LENGTH = 100000;
 
-  static MAX_OUTPUT_TOKENS = 8192;
+  static MAX_OUTPUT_TOKENS = 4096;
+
+  static MINIMUM_RETRY_OUTPUT_TOKENS = 2048;
+
+  static TOKEN_BUDGET_SAFETY_MARGIN = 1;
 
   static TIMEOUT_MS = 30000;
 }

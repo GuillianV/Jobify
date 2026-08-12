@@ -10,14 +10,17 @@ const MODEL = "test-model";
 const SYSTEM_PROMPT = "private system prompt";
 const USER_PROMPT = "private user prompt";
 const TIMEOUT = 30000;
-const MAX_TOKENS = 8192;
+const MAX_TOKENS = 4096;
 const TIMER_ID = 7;
 const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 const HTTP_BAD_REQUEST = 400;
+const HTTP_CONTENT_TOO_LARGE = 413;
 const HTTP_RATE_LIMITED = 429;
 const HTTP_SERVER_ERROR = 500;
+const TOKEN_LIMIT = 12000;
+const TOKEN_REQUESTED = 12047;
 
 /**
  * Build one successful fetch response containing serialized message JSON.
@@ -30,6 +33,22 @@ function createResponse(value) {
     status: HTTP_OK,
     async json() {
       return { choices: [{ message: { content: JSON.stringify(value) } }] };
+    },
+  };
+}
+
+/**
+ * Build one rejected fetch response with an isolated synthetic provider body.
+ * @param {number} status - HTTP status.
+ * @param {unknown} body - Synthetic response payload.
+ * @returns {object} Fetch response double.
+ */
+function createErrorResponse(status, body) {
+  return {
+    ok: false,
+    status,
+    async json() {
+      return structuredClone(body);
     },
   };
 }
@@ -222,6 +241,96 @@ test("HTTP statuses have stable safe classifications", async () => {
     assert.equal(error.code, expectedCode);
     assert.deepEqual(error.safeDetails, { status });
   }
+});
+
+test("recognized HTTP 413 token budgets expose only strict safe integers", async () => {
+  const sensitiveSentinels = [
+    "organization-secret",
+    "prompt-secret",
+    "candidate-secret",
+  ];
+  const message = [
+    ...sensitiveSentinels,
+    `Limit ${TOKEN_LIMIT}, Requested ${TOKEN_REQUESTED}`,
+  ].join(" ");
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return createErrorResponse(HTTP_CONTENT_TOO_LARGE, {
+        error: {
+          type: "tokens",
+          code: "rate_limit_exceeded",
+          message,
+        },
+      });
+    },
+  });
+
+  const error = await captureError(client.completeJson(createRequest()));
+  assert.equal(error.code, GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED);
+  assert.deepEqual(error.safeDetails, {
+    limitTokens: TOKEN_LIMIT,
+    requestedTokens: TOKEN_REQUESTED,
+  });
+  const exposable = JSON.stringify({
+    code: error.code,
+    safeDetails: error.safeDetails,
+  });
+  for (const sentinel of sensitiveSentinels) {
+    assert.equal(exposable.includes(sentinel), false);
+  }
+});
+
+test("unrecognized or incoherent HTTP 413 bodies retain generic HTTP behavior", async () => {
+  const invalidBodies = [
+    {},
+    { error: { type: "other", code: "rate_limit_exceeded", message: "Limit 10, Requested 11" } },
+    { error: { type: "tokens", code: "other", message: "Limit 10, Requested 11" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "unknown" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Requested 11" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 10" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit ten, Requested 11" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 0, Requested 11" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit -1, Requested 11" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 10, Requested 10" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 10, Requested 9" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 10.5, Requested 11" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 10, Requested 11.5" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 9007199254740992, Requested 9007199254740993" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 10, Requested 11; Limit 12, Requested 13" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 999 metadata. Limit 12000, Requested 12047" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Requested 999 metadata. Limit 12000, Requested 12047" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 12000, Requested 12047. Limit 999 metadata" } },
+    { error: { type: "tokens", code: "rate_limit_exceeded", message: "Limit 12000, Requested 12047. Requested 999 metadata" } },
+  ];
+  for (const body of invalidBodies) {
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return createErrorResponse(HTTP_CONTENT_TOO_LARGE, body);
+      },
+    });
+    const error = await captureError(client.completeJson(createRequest()));
+    assert.equal(error.code, GroqJsonClientError.CODE.HTTP_ERROR);
+    assert.deepEqual(error.safeDetails, { status: HTTP_CONTENT_TOO_LARGE });
+  }
+
+  const unreadableClient = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return {
+        ok: false,
+        status: HTTP_CONTENT_TOO_LARGE,
+        async json() {
+          throw new Error("private provider body");
+        },
+      };
+    },
+  });
+  const unreadable = await captureError(unreadableClient.completeJson(createRequest()));
+  assert.equal(unreadable.code, GroqJsonClientError.CODE.HTTP_ERROR);
+  assert.deepEqual(unreadable.safeDetails, { status: HTTP_CONTENT_TOO_LARGE });
 });
 
 test("invalid envelopes and content are rejected without leaking content", async () => {

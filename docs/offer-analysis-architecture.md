@@ -177,14 +177,15 @@ constituent pas encore un cache ou une identité persistante.
 
 `GroqJsonClient` encapsule uniquement le transport Analyzer. Il reçoit la clé,
 le transport `fetch`, l'endpoint et les primitives de timer par injection. Une
-requête utilise `temperature: 0`, le mode `json_object`, une limite de 8192
-tokens et un timeout de 30 secondes. Il parse l'enveloppe Groq puis le contenu
+requête utilise `temperature: 0`, le mode `json_object`, un plafond de tokens
+fourni par le service — 4096 pour l'appel normal — et un timeout de 30
+secondes. Il parse l'enveloppe Groq puis le contenu
 JSON, sans connaître ni valider le contrat `OfferAnalysis`.
 
 Ses erreurs stables distinguent indisponibilité, timeout, limitation de débit,
 authentification, autre erreur HTTP et réponse invalide. Elles n'exposent ni
-clé, ni prompt, ni texte d'offre, ni contenu brut du provider. Aucun appel ne
-fait de retry.
+clé, ni prompt, ni texte d'offre, ni contenu brut du provider. Le client ne
+fait lui-même aucun retry.
 
 ## Prompt et frontière non fiable — IMPLEMENTED
 
@@ -222,8 +223,10 @@ l'offre autoritativement, impose `SUFFICIENT`, puis délègue toute projection �
 `OfferAnalysisInputProjector`. Un texte dépassant 100000 unités
 `String.length` est rejeté sans troncature, chunking ou appel provider.
 
-Le service effectue au maximum un appel Groq, puis transmet la valeur JSON
-brute à `OfferAnalysisValidator.validate(raw, exactEffectiveText)`. Il
+Le service effectue un appel Groq normal et, uniquement après un rejet
+token-budget strictement reconnu, au maximum un second appel technique. Il
+transmet ensuite la première valeur JSON produite à
+`OfferAnalysisValidator.validate(raw, exactEffectiveText)`. Il
 n'appelle jamais le normalizer directement. Une sortie partielle, une preuve
 inventée ou une assertion interdite invalide toute l'analyse.
 Les violations du contrat utilisent `OfferAnalysisValidationError` et deviennent
@@ -250,7 +253,40 @@ règle mécanique en échec lors de la prochaine calibration.
 Le résultat en mémoire contient l'instance validée, le snapshot, l'origine du
 contenu, les deux empreintes et la provenance analyzer
 `offer-analyzer-v3`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
-de cache ou métadonnée persistée.
+de cache ou métadonnée persistée. Sa provenance inclut également
+`maxOutputTokens`, plafond effectivement utilisé par la génération validée.
+
+## Budget de tokens Analyzer — IMPLEMENTED
+
+L'investigation 7B.14 a confirmé que les HTTP 413 observés provenaient de
+l'admission token du provider : la demande comptabilisée correspondait aux
+tokens du prompt additionnés à `max_tokens`. La limite du compte ou du plan
+n'est jamais codée en dur dans Jobify.
+
+Le plafond normal Analyzer vaut désormais 4096 tokens. Lorsqu'un HTTP 413
+contient le diagnostic Groq strict `tokens`/`rate_limit_exceeded` et une paire
+entière cohérente `Limit`/`Requested`, le transport n'expose que ces deux
+nombres sûrs. `OfferAnalyzerService` peut alors effectuer au maximum un retry
+technique avec le même prompt, le même modèle et le même contenu. Seul le
+plafond de sortie diminue, avec une marge d'un token sous la limite calculée.
+
+Le retry exige au moins 2048 tokens de sortie disponibles. Ce seuil est un
+plancher opérationnel provisoire à vérifier avec les `completion_tokens` de la
+prochaine calibration ; il ne garantit pas la taille maximale théorique du
+contrat. Si le budget restant est plus faible, l'offre n'est ni tronquée ni
+renvoyée au provider. Un second rejet token-budget arrête aussi le flux. Les
+413 non reconnus conservent le mapping HTTP/provider historique.
+
+Ce mécanisme n'est pas un repair retry : une sortie produite puis rejetée par
+le validator n'est jamais régénérée. Le champ transport reste `max_tokens` ;
+une migration éventuelle vers `max_completion_tokens` est différée. La policy
+reste `offer-analyzer-v3`, le schéma reste `offer-analysis-schema-v1` et le
+prompt V3 ne change pas.
+
+La future provenance et la future clé de cache 7C devront tenir compte au
+minimum de la policy, du provider, du modèle, de `maxOutputTokens`, des
+empreintes de contenu et d'entrée, ainsi que de la version de schéma
+appropriée. La prochaine calibration V3 reste requise avant 7C.
 
 ## Étapes futures
 

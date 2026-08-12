@@ -38,7 +38,7 @@ class OfferAnalyzerService {
   }
 
   /**
-   * Reload, verify and analyze one persisted offer without persistence or retry.
+   * Reload, verify and analyze with at most one technical token-budget retry.
    * @param {number} id - Internal SQLite offer identifier.
    * @returns {Promise<object>} Validated in-memory analysis and deterministic provenance.
    */
@@ -63,7 +63,8 @@ class OfferAnalyzerService {
       throw new OfferAnalyzerError(OfferAnalyzerError.CODE.ANALYZER_INPUT_TOO_LARGE);
     }
     const prompts = this.promptBuilder.build(input.offerSnapshot, input.effectiveText);
-    const rawAnalysis = await this.requestAnalysis(prompts);
+    const completion = await this.requestAnalysis(prompts);
+    const rawAnalysis = completion.rawAnalysis;
     let offerAnalysis;
     try {
       offerAnalysis = this.analysisValidator.validate(rawAnalysis, input.effectiveText);
@@ -93,6 +94,7 @@ class OfferAnalyzerService {
         policyVersion: this.config.policyVersion,
         provider: this.config.provider,
         model: this.config.model,
+        maxOutputTokens: completion.maxOutputTokens,
       },
     };
   }
@@ -109,24 +111,97 @@ class OfferAnalyzerService {
   }
 
   /**
-   * Perform the single Groq request and map only known transport failures.
+   * Perform the bounded Groq attempt sequence and map known transport failures.
    * @param {{systemPrompt: string, userPrompt: string}} prompts - Analyzer prompts.
    * @returns {Promise<unknown>} Parsed untrusted JSON value.
    */
   async requestAnalysis(prompts) {
+    const initialMaxTokens = this.config.maxTokens;
     try {
-      return await this.groqClient.completeJson({
-        ...prompts,
-        model: this.config.model,
-        timeout: this.config.timeout,
-        maxTokens: this.config.maxTokens,
-      });
+      const rawAnalysis = await this.completeAnalysis(prompts, initialMaxTokens);
+      return { rawAnalysis, maxOutputTokens: initialMaxTokens };
     } catch (error) {
       if (!(error instanceof GroqJsonClientError)) {
         throw error;
       }
-      throw this.mapGroqError(error);
+      if (error.code !== GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
+        throw this.mapGroqError(error);
+      }
+      const retryMaxTokens = this.calculateRetryMaxTokens(error, initialMaxTokens);
+      if (retryMaxTokens === null) {
+        throw new OfferAnalyzerError(
+          OfferAnalyzerError.CODE.ANALYZER_PROVIDER_TOKEN_BUDGET,
+          {},
+          error,
+        );
+      }
+      try {
+        const rawAnalysis = await this.completeAnalysis(prompts, retryMaxTokens);
+        return { rawAnalysis, maxOutputTokens: retryMaxTokens };
+      } catch (retryError) {
+        if (!(retryError instanceof GroqJsonClientError)) {
+          throw retryError;
+        }
+        if (retryError.code === GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
+          throw new OfferAnalyzerError(
+            OfferAnalyzerError.CODE.ANALYZER_PROVIDER_TOKEN_BUDGET,
+            {},
+            retryError,
+          );
+        }
+        throw this.mapGroqError(retryError);
+      }
     }
+  }
+
+  /**
+   * Submit one Analyzer completion with an explicit output ceiling.
+   * @param {{systemPrompt: string, userPrompt: string}} prompts - Exact Analyzer prompts.
+   * @param {number} maxTokens - Output ceiling for this attempt.
+   * @returns {Promise<unknown>} Parsed untrusted JSON value.
+   */
+  async completeAnalysis(prompts, maxTokens) {
+    return await this.groqClient.completeJson({
+      ...prompts,
+      model: this.config.model,
+      timeout: this.config.timeout,
+      maxTokens,
+    });
+  }
+
+  /**
+   * Derive one strictly lower retry ceiling from safe provider diagnostics.
+   * @param {GroqJsonClientError} error - Recognized token-budget rejection.
+   * @param {number} currentMaxTokens - Ceiling used by the rejected attempt.
+   * @returns {number|null} Safe retry ceiling, or null when retry is unsafe.
+   */
+  calculateRetryMaxTokens(error, currentMaxTokens) {
+    const { limitTokens, requestedTokens } = error.safeDetails;
+    const values = [currentMaxTokens, limitTokens, requestedTokens];
+    const validValues = values.every((value) => {
+      return Number.isSafeInteger(value) && value > 0;
+    });
+    if (!validValues || requestedTokens <= limitTokens
+      || requestedTokens <= currentMaxTokens) {
+      return null;
+    }
+    const promptTokens = requestedTokens - currentMaxTokens;
+    if (promptTokens <= 0) {
+      return null;
+    }
+    const safeMax = Math.floor(
+      limitTokens
+      - promptTokens
+      - OfferAnalyzerConstants.TOKEN_BUDGET_SAFETY_MARGIN,
+    );
+    const retryMaxTokens = Math.min(currentMaxTokens, safeMax);
+    if (!Number.isSafeInteger(safeMax)
+      || safeMax >= currentMaxTokens
+      || safeMax < OfferAnalyzerConstants.MINIMUM_RETRY_OUTPUT_TOKENS
+      || retryMaxTokens >= currentMaxTokens) {
+      return null;
+    }
+    return retryMaxTokens;
   }
 
   /**
@@ -141,6 +216,8 @@ class OfferAnalyzerService {
       [GroqJsonClientError.CODE.AUTHENTICATION_ERROR]: OfferAnalyzerError.CODE.ANALYZER_UNAVAILABLE,
       [GroqJsonClientError.CODE.TIMEOUT]: OfferAnalyzerError.CODE.ANALYZER_TIMEOUT,
       [GroqJsonClientError.CODE.RATE_LIMITED]: OfferAnalyzerError.CODE.ANALYZER_RATE_LIMITED,
+      [GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED]:
+        OfferAnalyzerError.CODE.ANALYZER_PROVIDER_TOKEN_BUDGET,
       [GroqJsonClientError.CODE.HTTP_ERROR]: OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR,
       [GroqJsonClientError.CODE.INVALID_RESPONSE]: OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
     };

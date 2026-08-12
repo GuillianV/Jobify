@@ -3,7 +3,13 @@ import { GroqJsonClientError } from "./GroqJsonClientError.js";
 
 const HTTP_STATUS_UNAUTHORIZED = 401;
 const HTTP_STATUS_FORBIDDEN = 403;
+const HTTP_STATUS_CONTENT_TOO_LARGE = 413;
 const HTTP_STATUS_RATE_LIMITED = 429;
+const TOKEN_BUDGET_ERROR_TYPE = "tokens";
+const TOKEN_BUDGET_ERROR_CODE = "rate_limit_exceeded";
+const TOKEN_BUDGET_LIMIT_LABEL_PATTERN = /\bLimit\b/gu;
+const TOKEN_BUDGET_REQUESTED_LABEL_PATTERN = /\bRequested\b/gu;
+const TOKEN_BUDGET_PATTERN = /\bLimit\s+(\d+)(?![\d.]),\s*Requested\s+(\d+)(?![\d.])/gu;
 
 /**
  * Performs one provider-agnostic JSON chat completion through Groq transport.
@@ -76,7 +82,7 @@ class GroqJsonClient {
         body: requestBody,
         signal: controller.signal,
       });
-      this.validateHttpResponse(response);
+      await this.validateHttpResponse(response);
       return await this.parseResponse(response);
     } catch (error) {
       if (error instanceof GroqJsonClientError) {
@@ -122,11 +128,11 @@ class GroqJsonClient {
   }
 
   /**
-   * Classify one non-successful HTTP response without reading its body.
+   * Classify one non-successful response and narrowly inspect recognized 413 bodies.
    * @param {object} response - Fetch response.
-   * @returns {void}
+   * @returns {Promise<void>}
    */
-  validateHttpResponse(response) {
+  async validateHttpResponse(response) {
     if (response?.ok) {
       return;
     }
@@ -143,7 +149,52 @@ class GroqJsonClient {
         { status },
       );
     }
+    if (status === HTTP_STATUS_CONTENT_TOO_LARGE) {
+      const tokenBudget = await this.parseTokenBudgetError(response);
+      if (tokenBudget !== null) {
+        throw new GroqJsonClientError(
+          GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED,
+          tokenBudget,
+        );
+      }
+    }
     throw new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, { status });
+  }
+
+  /**
+   * Parse only the recognized Groq single-request token-budget rejection.
+   * @param {object} response - HTTP 413 response whose body remains untrusted.
+   * @returns {Promise<{limitTokens: number, requestedTokens: number}|null>} Safe numeric details.
+   */
+  async parseTokenBudgetError(response) {
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      return null;
+    }
+    const providerError = payload?.error;
+    if (providerError?.type !== TOKEN_BUDGET_ERROR_TYPE
+      || providerError?.code !== TOKEN_BUDGET_ERROR_CODE
+      || typeof providerError?.message !== "string") {
+      return null;
+    }
+    const limitLabels = [...providerError.message.matchAll(TOKEN_BUDGET_LIMIT_LABEL_PATTERN)];
+    const requestedLabels = [
+      ...providerError.message.matchAll(TOKEN_BUDGET_REQUESTED_LABEL_PATTERN),
+    ];
+    const matches = [...providerError.message.matchAll(TOKEN_BUDGET_PATTERN)];
+    if (limitLabels.length !== 1 || requestedLabels.length !== 1
+      || matches.length !== 1) {
+      return null;
+    }
+    const limitTokens = Number(matches[0][1]);
+    const requestedTokens = Number(matches[0][2]);
+    if (!Number.isSafeInteger(limitTokens) || limitTokens <= 0
+      || !Number.isSafeInteger(requestedTokens) || requestedTokens <= limitTokens) {
+      return null;
+    }
+    return { limitTokens, requestedTokens };
   }
 
   /**
