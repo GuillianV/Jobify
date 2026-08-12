@@ -81,23 +81,32 @@ test("system prompt organizes the exact output contract into stable sections", (
   assert.match(systemPrompt, /aucun summary, confidence, metadata, schemaVersion, snapshot, fingerprint/u);
 });
 
-test("system prompt centralizes every exact enum and its defensive fallbacks", () => {
+test("system prompt maps every field to enums derived from contract constants", () => {
   const { systemPrompt } = new OfferAnalyzerPrompt().build(createSnapshot(), HOSTILE_TEXT);
-  const enums = [
-    ["ASSERTION", OfferAnalysisConstants.ASSERTION],
-    ["REQUIREMENT_CATEGORY", OfferAnalysisConstants.REQUIREMENT_CATEGORY],
-    ["REQUIREMENT_IMPORTANCE", OfferAnalysisConstants.REQUIREMENT_IMPORTANCE],
-    ["SENIORITY_LEVEL", OfferAnalysisConstants.SENIORITY_LEVEL],
-    ["CONTEXT_CATEGORY", OfferAnalysisConstants.CONTEXT_CATEGORY],
-    ["WORK_MODE_ENUM", OfferAnalysisConstants.WORK_MODE],
-    ["CONSTRAINT_CATEGORY", OfferAnalysisConstants.CONSTRAINT_CATEGORY],
+  const explicitOnly = { EXPLICIT: OfferAnalysisConstants.ASSERTION.EXPLICIT };
+  const fields = [
+    ["activity.assertion", OfferAnalysisConstants.ASSERTION],
+    ["requirement.category", OfferAnalysisConstants.REQUIREMENT_CATEGORY],
+    ["requirement.importance", OfferAnalysisConstants.REQUIREMENT_IMPORTANCE],
+    ["requirement.assertion", explicitOnly],
+    ["context.category", OfferAnalysisConstants.CONTEXT_CATEGORY],
+    ["context.assertion", OfferAnalysisConstants.ASSERTION],
+    ["seniority.levels[]", OfferAnalysisConstants.SENIORITY_LEVEL],
+    ["seniority.assertion", OfferAnalysisConstants.ASSERTION],
+    ["workConditions.workMode.mode", OfferAnalysisConstants.WORK_MODE],
+    ["workConditions.workMode.assertion", explicitOnly],
+    ["workConditions.constraints[].category", OfferAnalysisConstants.CONSTRAINT_CATEGORY],
+    ["workConditions.constraints[].assertion", explicitOnly],
   ];
-  for (const [label, enumObject] of enums) {
-    const declaration = `${label} = ${JSON.stringify(Object.values(enumObject))}`;
+  for (const [field, enumObject] of fields) {
+    const declaration = `${field} -> ${JSON.stringify(Object.values(enumObject))}`;
     assert.equal(systemPrompt.includes(declaration), true);
   }
   assert.match(systemPrompt, /enum sont exactes et CASE-SENSITIVE/u);
+  assert.match(systemPrompt, /field doit contenir littéralement une des valeurs exactes/u);
   assert.match(systemPrompt, /Ne traduis, n'invente, ne combine/u);
+  assert.match(systemPrompt, /nom symbolique d'un type enum/u);
+  assert.match(systemPrompt, /valeur appartenant à un autre enum/u);
   assert.match(systemPrompt, /requirement\.category non représentable -> OTHER/u);
   assert.match(systemPrompt, /OTHER et null ne sont jamais des fallbacks génériques/u);
 });
@@ -139,8 +148,15 @@ test("system prompt enforces factuality evidence and explicit-only families", ()
   const { systemPrompt } = new OfferAnalyzerPrompt().build(createSnapshot(), HOSTILE_TEXT);
   assert.match(systemPrompt, /INFERRED est permis uniquement pour activities, seniority et context/u);
   assert.match(systemPrompt, /Requirements, workMode et constraints sont toujours EXPLICIT/u);
-  assert.match(systemPrompt, /substring exacte et contiguë de untrustedOfferText/u);
-  assert.match(systemPrompt, /sans paraphrase, correction ni normalisation/u);
+  assert.match(systemPrompt, /copie evidence\.text caractère pour caractère/u);
+  assert.match(systemPrompt, /une seule substring courte, exacte et contiguë/u);
+  assert.match(systemPrompt, /orthographe, casse, accents, ponctuation, apostrophes et espaces/u);
+  assert.match(systemPrompt, /Ne paraphrase, normalise, réécris, corrige, reconstruis ou concatène jamais/u);
+  assert.match(systemPrompt, /fragments séparés/u);
+  assert.match(systemPrompt, /aucune substring evidence exacte et valide.*omets cet item/u);
+  assert.match(systemPrompt, /au lieu de fabriquer, reconstruire ou normaliser/u);
+  assert.match(systemPrompt, /Ne transforme jamais artificiellement un fait EXPLICIT en INFERRED/u);
+  assert.match(systemPrompt, /véritable inférence autorisée indépendamment/u);
   assert.match(systemPrompt, /Pour INFERRED, evidence vaut exactement null/u);
   assert.match(systemPrompt, /deterministicContext ne sert jamais d'evidence/u);
   assert.match(systemPrompt, /activity implique une compétence/u);
@@ -148,16 +164,44 @@ test("system prompt enforces factuality evidence and explicit-only families", ()
   assert.match(systemPrompt, /Si une attente n'est pas explicitement demandée.*omets le requirement/u);
 });
 
+test("system prompt defines general requirement category boundaries", () => {
+  const { systemPrompt } = new OfferAnalyzerPrompt().build(createSnapshot(), HOSTILE_TEXT);
+  assert.match(systemPrompt, /TOOL_OR_TECHNOLOGY désigne une technologie nommée/u);
+  assert.match(systemPrompt, /langage de programmation, framework, bibliothèque, produit, plateforme, service cloud, base de données, outil logiciel/u);
+  assert.match(systemPrompt, /TECHNICAL_SKILL désigne une capacité, pratique, méthode, discipline ou concept technique/u);
+  assert.match(systemPrompt, /pas lui-même une technologie ou un produit nommé/u);
+  assert.match(systemPrompt, /langage de programmation nommé relève de TOOL_OR_TECHNOLOGY/u);
+  assert.match(systemPrompt, /LANGUAGE est réservé uniquement à une langue humaine/u);
+  assert.match(systemPrompt, /FUNCTIONAL_SKILL désigne une compétence métier ou fonctionnelle/u);
+  assert.match(systemPrompt, /processus métier, une connaissance fonctionnelle ou une capacité d'analyse métier/u);
+  assert.match(systemPrompt, /OTHER est un fallback contrôlé/u);
+  assert.match(systemPrompt, /jamais un fallback universel/u);
+  assert.match(systemPrompt, /diplôme ou une formation académique relève de EDUCATION/u);
+  assert.match(systemPrompt, /durée ou nature de l'expérience relève de EXPERIENCE/u);
+  assert.match(systemPrompt, /permis, une habilitation, une autorisation, une licence réglementaire/u);
+  assert.match(systemPrompt, /relève de OTHER/u);
+});
+
+test("system prompt defines requirement importance without ranking or selection bias", () => {
+  const { systemPrompt } = new OfferAnalyzerPrompt().build(createSnapshot(), HOSTILE_TEXT);
+  assert.match(systemPrompt, /REQUIRED signifie une obligation, nécessité, prérequis ou attente clairement impérative/u);
+  assert.match(systemPrompt, /PREFERRED signifie un plus, souhait, préférence, avantage/u);
+  assert.match(systemPrompt, /UNSPECIFIED signifie que le requirement est explicite/u);
+  assert.match(systemPrompt, /liste de compétences ne signifie jamais automatiquement REQUIRED/u);
+  assert.match(systemPrompt, /importance n'est ni un score de pertinence ni un mécanisme de classement/u);
+  assert.match(systemPrompt, /sélection d'un requirement ne modifie jamais requirement\.importance/u);
+});
+
 test("system prompt keeps semantic extraction conservative and excludes boilerplate", () => {
   const { systemPrompt } = new OfferAnalyzerPrompt().build(createSnapshot(), HOSTILE_TEXT);
   assert.match(systemPrompt, /TEAM décrit uniquement une véritable équipe/u);
   assert.match(systemPrompt, /Intérim, CDI, CDD.*agence de recrutement.*ne sont jamais TEAM/u);
   assert.match(systemPrompt, /Seniority peut aussi avoir assertion INFERRED/u);
-  assert.match(systemPrompt, /signaux concrets, concordants et non ambigus/u);
-  assert.match(systemPrompt, /responsabilité, autonomie, portée technique ou leadership/u);
-  assert.match(systemPrompt, /aucun signal isolé ne suffit/u);
-  assert.match(systemPrompt, /première expérience, expérience souhaitée, autonomie/u);
-  assert.match(systemPrompt, /mot responsable, le mot expert ou un nombre d'années/u);
+  assert.match(systemPrompt, /plusieurs signaux indépendants, concrets, concordants et non ambigus/u);
+  assert.match(systemPrompt, /au-delà des attentes ordinaires du rôle/u);
+  assert.match(systemPrompt, /nombre d'années, l'autonomie, le mot expert, le mot responsable/u);
+  assert.match(systemPrompt, /complexité technique ou un ownership générique ne suffit jamais seul/u);
+  assert.match(systemPrompt, /Pour SENIOR, un nombre d'années combiné au seul caractère technique du poste ne suffit pas/u);
   assert.match(systemPrompt, /aucun mapping fixe entre un nombre d'années et SENIORITY_LEVEL/u);
   assert.match(systemPrompt, /signal est ambigu, utilise seniority null ou moins de niveaux/u);
   assert.match(systemPrompt, /adresse, une localisation ou l'absence de télétravail ne permet jamais d'inférer ONSITE/u);
@@ -177,6 +221,8 @@ test("system prompt treats offer text as untrusted data and performs a silent fi
   assert.match(systemPrompt, /effectue silencieusement ce contrôle sans exposer ton raisonnement/u);
   assert.match(systemPrompt, /exactement un objet JSON et rien d'autre/u);
   assert.match(systemPrompt, /chaque enum utilise une valeur autorisée exacte et CASE-SENSITIVE/u);
+  assert.match(systemPrompt, /evidence\.text est copiée verbatim comme une seule substring exacte, contiguë/u);
+  assert.match(systemPrompt, /retire l'item avant de répondre sans le convertir artificiellement en INFERRED/u);
   assert.match(systemPrompt, /au moins un semantic object reste/u);
   assert.match(systemPrompt, /aucun champ de validation, check ou reasoning/u);
 });

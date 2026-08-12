@@ -189,17 +189,23 @@ fait de retry.
 ## Prompt et frontière non fiable — IMPLEMENTED
 
 Le schéma de données reste `offer-analysis-schema-v1`, tandis que la politique
-Analyzer devient `offer-analyzer-v2`. Ce changement de provenance distingue la
-restructuration matérielle du prompt et de ses règles d'interprétation sans
-modifier ni assouplir le validator.
+Analyzer devient `offer-analyzer-v3`. La politique V2 a validé trois analyses
+sur six réponses HTTP 200 lors de sa calibration réelle, soit 50 % first-pass.
+V3 applique donc un tuning ciblé sans modifier ni assouplir le validator.
 
-`OfferAnalyzerPrompt` présente désormais séparément le contrat de sortie, les
-enums fermés sensibles à la casse, les limites et le contrôle final silencieux.
-Les exigences, le mode de travail et les contraintes restent exclusivement
-explicites. La preuve conserve exactement son contrat V1. La politique renforce
-également l'omission des exigences seulement déduites, réserve `TEAM` aux vraies
-informations d'équipe et adopte une séniorité conservatrice. Le boilerplate est
-ignoré sans nettoyage destructif préalable. Aucun repair retry n'est ajouté.
+`OfferAnalyzerPrompt` présente séparément le contrat de sortie, les enums fermés
+sensibles à la casse, les limites et le contrôle final silencieux. V3 renforce
+la copie caractère pour caractère d'une preuve courte et contiguë, puis impose
+l'omission d'un item explicite lorsqu'aucune preuve exacte ne peut le soutenir.
+Elle ajoute une correspondance mécanique entre chaque field et ses valeurs enum,
+clarifie les catégories d'exigences et leur importance, et élève la barre d'une
+séniorité inférée. Les exigences, le mode de travail et les contraintes restent
+exclusivement explicites.
+
+Les protections V2 efficaces sont conservées : omission des exigences seulement
+déduites, `TEAM` réservé aux vraies informations d'équipe, conditions de travail
+explicites, exclusion du boilerplate et sélection sous les cardinalités V1.
+Aucun sous-diagnostic SAFE et aucun repair retry ne sont ajoutés.
 
 Le user prompt sérialise un objet JSON séparant `deterministicContext` et
 `untrustedOfferText`. Le contexte contient uniquement titre, entreprise,
@@ -234,14 +240,14 @@ invalide intervient avant ce validator et ne reçoit donc aucun
 
 Le résultat en mémoire contient l'instance validée, le snapshot, l'origine du
 contenu, les deux empreintes et la provenance analyzer
-`offer-analyzer-v2`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
+`offer-analyzer-v3`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
 de cache ou métadonnée persistée.
 
 ## Étapes futures
 
 Les éléments suivants restent **FUTURE** :
 
-- une recalibration first-pass de la politique V2 sur six nouvelles offres
+- une recalibration first-pass de la politique V3 sur six nouvelles offres
   `READY`, choisies selon les sources réellement disponibles, avec une offre
   utilisateur sûre lorsqu'il en existe une ;
 - **7C** : correction du fallback de modèle vide dans `AppConfig`, wiring
@@ -250,6 +256,6 @@ Les éléments suivants restent **FUTURE** :
 - **7D** : orchestration et affichage desktop ;
 - `ApplicationBrief`, profil candidat, comparaison et génération de documents.
 
-La recalibration V2 reste obligatoire avant de commencer 7C. Après 7B, Jobify
+La recalibration V3 reste obligatoire avant de commencer 7C. Après 7B, Jobify
 sait produire et vérifier une analyse en mémoire par instanciation directe du
 service. Aucun consommateur API ou desktop n'est encore câblé.
