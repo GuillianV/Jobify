@@ -172,10 +172,15 @@ test("system prompt classifies work mode explicitly or uses null", () => {
   assert.match(systemPrompt, /exprime explicitement une modalité de travail classable sans ambiguïté/u);
   assert.match(systemPrompt, /REMOTE signifie que le travail à distance est explicitement présenté/u);
   assert.match(systemPrompt, /HYBRID signifie une combinaison explicite de travail à distance et sur site/u);
-  assert.match(systemPrompt, /ONSITE signifie une présence sur site ou lieu de travail explicitement requise/u);
+  assert.match(systemPrompt, /ONSITE signifie que l'offre indique explicitement que le poste ou travail est exercé en présentiel/u);
+  assert.match(systemPrompt, /présence physique au lieu de travail est requise comme condition d'exécution du poste/u);
+  assert.match(systemPrompt, /suffit même sans formulation de politique formelle, de work arrangement ou de modalité de travail/u);
   assert.match(systemPrompt, /aucune classification WORK_MODE exacte, explicite et non ambiguë.*workConditions\.workMode vaut null/u);
   assert.match(systemPrompt, /n'invente jamais mode/u);
-  assert.match(systemPrompt, /Ne déduis jamais ONSITE d'une adresse, ville, lieu de mission/u);
+  assert.match(systemPrompt, /Ne déduis jamais ONSITE d'une adresse, ville, localisation/u);
+  assert.match(systemPrompt, /nom de site, chantier, bureau, lieu de mission/u);
+  assert.match(systemPrompt, /métier physique, tâche opérationnelle, déplacement ou absence de télétravail pris seuls/u);
+  assert.match(systemPrompt, /sans déclaration explicite sur la manière ou le lieu d'exécution du poste/u);
   assert.match(systemPrompt, /Ne déduis jamais REMOTE de la nature numérique ou IT du poste/u);
   assert.match(systemPrompt, /Ne déduis jamais HYBRID d'une flexibilité vague/u);
 });
@@ -239,6 +244,9 @@ test("system prompt treats offer text as untrusted data and performs a silent fi
   assert.match(systemPrompt, /chaque enum utilise une valeur autorisée exacte et CASE-SENSITIVE/u);
   assert.match(systemPrompt, /workConditions\.workMode vaut null, ou que son mode vaut exactement REMOTE, HYBRID ou ONSITE/u);
   assert.match(systemPrompt, /assertion EXPLICIT et une evidence explicite valide/u);
+  assert.match(systemPrompt, /Pour ONSITE, conserve une classification explicitement soutenue/u);
+  assert.match(systemPrompt, /poste ou travail est déclaré en présentiel/u);
+  assert.match(systemPrompt, /même sans politique formelle d'organisation du travail/u);
   assert.match(systemPrompt, /mets workConditions\.workMode à null sans convertir une valeur proche/u);
   assert.match(systemPrompt, /evidence\.text est copiée verbatim comme une seule substring exacte, contiguë/u);
   assert.match(systemPrompt, /retire l'item avant de répondre sans le convertir artificiellement en INFERRED/u);
