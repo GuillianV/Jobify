@@ -254,6 +254,87 @@ test("dedicated validation failures map without masking generic TypeErrors", asy
   });
   assert.equal(exposable.includes(sensitiveSentinel), false);
 
+  const subcodeHarness = createHarness({
+    analysisValidator: {
+      validate() {
+        const error = new OfferAnalysisValidationError({
+          validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+          validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+            .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+          message: sensitiveSentinel,
+        });
+        error.path = sensitiveSentinel;
+        error.candidate = sensitiveSentinel;
+        error.evidence = sensitiveSentinel;
+        error.text = sensitiveSentinel;
+        error.rawOutput = sensitiveSentinel;
+        error.prompt = sensitiveSentinel;
+        throw error;
+      },
+    },
+  });
+  const mappedSubcode = await captureError(subcodeHarness.service.analyze(OFFER_ID));
+  assert.deepEqual(mappedSubcode.safeDetails, {
+    validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+    validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+      .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+  });
+  assert.equal(JSON.stringify(mappedSubcode.safeDetails).includes(sensitiveSentinel), false);
+
+  const enumHarness = createHarness({
+    analysisValidator: {
+      validate() {
+        throw new OfferAnalysisValidationError({
+          validationCode: OfferAnalysisValidationError.CODE.ENUM,
+          message: sensitiveSentinel,
+        });
+      },
+    },
+  });
+  const mappedEnum = await captureError(enumHarness.service.analyze(OFFER_ID));
+  assert.deepEqual(mappedEnum.safeDetails, {
+    validationCode: OfferAnalysisValidationError.CODE.ENUM,
+  });
+
+  const alteredSubcodeHarness = createHarness({
+    analysisValidator: {
+      validate() {
+        const error = new OfferAnalysisValidationError({
+          validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+          validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+            .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+          message: sensitiveSentinel,
+        });
+        error.validationSubcode = sensitiveSentinel;
+        throw error;
+      },
+    },
+  });
+  const mappedAltered = await captureError(alteredSubcodeHarness.service.analyze(OFFER_ID));
+  assert.deepEqual(mappedAltered.safeDetails, {
+    validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+  });
+
+  const alteredCodeHarness = createHarness({
+    analysisValidator: {
+      validate() {
+        const error = new OfferAnalysisValidationError({
+          validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+          validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+            .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+          message: sensitiveSentinel,
+        });
+        error.validationCode = OfferAnalysisValidationError.CODE.ENUM;
+        throw error;
+      },
+    },
+  });
+  const mappedAlteredCode = await captureError(alteredCodeHarness.service.analyze(OFFER_ID));
+  assert.deepEqual(mappedAlteredCode.safeDetails, {
+    validationCode: OfferAnalysisValidationError.CODE.ENUM,
+  });
+  assert.equal(Object.hasOwn(mappedAlteredCode.safeDetails, "validationSubcode"), false);
+
   const internalTypeError = new TypeError("internal bug");
   const internalHarness = createHarness({
     analysisValidator: {

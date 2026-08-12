@@ -71,9 +71,15 @@ class OfferAnalyzerService {
       if (!(error instanceof OfferAnalysisValidationError)) {
         throw error;
       }
+      const safeDetails = { validationCode: error.validationCode };
+      if (error.validationCode === OfferAnalysisValidationError.CODE.EVIDENCE
+        && Object.values(OfferAnalysisValidationError.EVIDENCE_SUBCODE)
+          .includes(error.validationSubcode)) {
+        safeDetails.validationSubcode = error.validationSubcode;
+      }
       throw new OfferAnalyzerError(
         OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
-        { validationCode: error.validationCode },
+        safeDetails,
         error,
       );
     }

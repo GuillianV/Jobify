@@ -231,12 +231,21 @@ Les violations du contrat utilisent `OfferAnalysisValidationError` et deviennent
 sont pas masquées par ce mapping.
 
 `OfferAnalysisValidationError` associe chaque rejet à une catégorie fermée et
-sûre. Pour un rejet du validator, `OfferAnalyzerService` expose uniquement
-`validationCode` dans `safeDetails`; aucune valeur candidate, preuve ou donnée
-source n'y entre. Le message et la cause restent des diagnostics internes et
-ne constituent pas une interface publique. Une réponse Groq syntaxiquement
-invalide intervient avant ce validator et ne reçoit donc aucun
-`validationCode` artificiel.
+sûre. Pour un rejet du validator, `OfferAnalyzerService` expose
+`validationCode` et, uniquement pour une branche `EVIDENCE` connue, un
+`validationSubcode` optionnel. Les quatre sous-codes fermés sont
+`INFERRED_EVIDENCE_PRESENT`, `EXPLICIT_EVIDENCE_TEXT_INVALID`,
+`EXPLICIT_EVIDENCE_TEXT_TOO_LONG` et `EXPLICIT_EVIDENCE_TEXT_NOT_FOUND`.
+Aucune valeur candidate, preuve ou donnée source n'entre dans ces diagnostics.
+Le message et la cause restent internes. Une réponse Groq syntaxiquement
+invalide intervient avant ce validator et ne reçoit donc aucun diagnostic
+validator artificiel.
+
+Cette instrumentation répond aux deux rejets `EVIDENCE` observés pendant la
+calibration V3. Elle ne change ni les décisions accept/reject, ni le prompt,
+ni la policy `offer-analyzer-v3`, ni le schéma `offer-analysis-schema-v1`, et ne
+prétend pas corriger le problème evidence. Elle doit seulement identifier la
+règle mécanique en échec lors de la prochaine calibration.
 
 Le résultat en mémoire contient l'instance validée, le snapshot, l'origine du
 contenu, les deux empreintes et la provenance analyzer

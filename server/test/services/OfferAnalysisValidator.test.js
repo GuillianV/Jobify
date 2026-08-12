@@ -198,6 +198,116 @@ test("validation codes form the exact closed safe taxonomy", () => {
     return error instanceof TypeError
       && !(error instanceof OfferAnalysisValidationError);
   });
+  assert.deepEqual(Object.values(OfferAnalysisValidationError.EVIDENCE_SUBCODE), [
+    "INFERRED_EVIDENCE_PRESENT",
+    "EXPLICIT_EVIDENCE_TEXT_INVALID",
+    "EXPLICIT_EVIDENCE_TEXT_TOO_LONG",
+    "EXPLICIT_EVIDENCE_TEXT_NOT_FOUND",
+  ]);
+  assert.equal(Object.isFrozen(OfferAnalysisValidationError.EVIDENCE_SUBCODE), true);
+
+  const historical = new OfferAnalysisValidationError({
+    validationCode: OfferAnalysisValidationError.CODE.ENUM,
+    message: "historical error",
+  });
+  assert.equal(Object.hasOwn(historical, "validationSubcode"), false);
+  const evidence = new OfferAnalysisValidationError({
+    validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+    validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+      .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+    message: "controlled error",
+  });
+  assert.equal(
+    evidence.validationSubcode,
+    OfferAnalysisValidationError.EVIDENCE_SUBCODE.EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+  );
+  for (const invalid of [
+    {
+      validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+      validationSubcode: "UNKNOWN",
+    },
+    {
+      validationCode: OfferAnalysisValidationError.CODE.ENUM,
+      validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+        .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+    },
+  ]) {
+    assert.throws(() => {
+      return new OfferAnalysisValidationError({
+        ...invalid,
+        message: "programming error",
+      });
+    }, (error) => {
+      return error instanceof TypeError
+        && !(error instanceof OfferAnalysisValidationError);
+    });
+  }
+});
+
+test("every evidence rejection receives its exact safe subcode", () => {
+  const inferred = createMinimalAnalysis();
+  inferred.activities[0].assertion = OfferAnalysisConstants.ASSERTION.INFERRED;
+  const nonString = createMinimalAnalysis();
+  nonString.activities[0].evidence.text = null;
+  const whitespace = createMinimalAnalysis();
+  whitespace.activities[0].evidence.text = "   ";
+  const tooLong = createMinimalAnalysis();
+  tooLong.activities[0].evidence.text = "a".repeat(
+    OfferAnalysisLimits.MAXIMUM_EVIDENCE_LENGTH + 1,
+  );
+  const notFound = createMinimalAnalysis();
+  notFound.activities[0].evidence.text = "safe absent sentinel";
+  const cases = [
+    [inferred, OfferAnalysisValidationError.EVIDENCE_SUBCODE.INFERRED_EVIDENCE_PRESENT],
+    [nonString, OfferAnalysisValidationError.EVIDENCE_SUBCODE.EXPLICIT_EVIDENCE_TEXT_INVALID],
+    [whitespace, OfferAnalysisValidationError.EVIDENCE_SUBCODE.EXPLICIT_EVIDENCE_TEXT_INVALID],
+    [tooLong, OfferAnalysisValidationError.EVIDENCE_SUBCODE.EXPLICIT_EVIDENCE_TEXT_TOO_LONG],
+    [notFound, OfferAnalysisValidationError.EVIDENCE_SUBCODE.EXPLICIT_EVIDENCE_TEXT_NOT_FOUND],
+  ];
+  for (const [candidate, expectedSubcode] of cases) {
+    const error = captureValidationError(() => {
+      createValidator().validate(candidate, SOURCE_TEXT);
+    });
+    assert.equal(error.validationCode, OfferAnalysisValidationError.CODE.EVIDENCE);
+    assert.equal(error.validationSubcode, expectedSubcode);
+  }
+
+  const defensive = createMinimalAnalysis();
+  defensive.activities[0].assertion = OfferAnalysisConstants.ASSERTION.INFERRED;
+  const defensiveError = captureValidationError(() => {
+    createValidator().validateFinalInvariants(defensive, SOURCE_TEXT);
+  });
+  assert.equal(
+    defensiveError.validationSubcode,
+    OfferAnalysisValidationError.EVIDENCE_SUBCODE.INFERRED_EVIDENCE_PRESENT,
+  );
+});
+
+test("evidence structural failures keep their top-level taxonomy without subcodes", () => {
+  const missingProperty = createMinimalAnalysis();
+  delete missingProperty.activities[0].evidence;
+  const nullEvidence = createMinimalAnalysis();
+  nullEvidence.activities[0].evidence = null;
+  const badShape = createMinimalAnalysis();
+  badShape.activities[0].evidence = [];
+  const missingText = createMinimalAnalysis();
+  missingText.activities[0].evidence = {};
+  const extraKey = createMinimalAnalysis();
+  extraKey.activities[0].evidence.extra = "safe sentinel";
+  const cases = [
+    [missingProperty, OfferAnalysisValidationError.CODE.STRUCTURE],
+    [nullEvidence, OfferAnalysisValidationError.CODE.STRUCTURE],
+    [badShape, OfferAnalysisValidationError.CODE.STRUCTURE],
+    [missingText, OfferAnalysisValidationError.CODE.STRUCTURE],
+    [extraKey, OfferAnalysisValidationError.CODE.UNKNOWN_KEY],
+  ];
+  for (const [candidate, expectedCode] of cases) {
+    const error = captureValidationError(() => {
+      createValidator().validate(candidate, SOURCE_TEXT);
+    });
+    assert.equal(error.validationCode, expectedCode);
+    assert.equal(Object.hasOwn(error, "validationSubcode"), false);
+  }
 });
 
 test("representative contract failures receive every safe validation category", () => {

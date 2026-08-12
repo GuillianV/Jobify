@@ -265,6 +265,8 @@ class OfferAnalysisValidator {
       if (evidence !== null) {
         throw new OfferAnalysisValidationError({
           validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+          validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+            .INFERRED_EVIDENCE_PRESENT,
           message: "Inferred assertion evidence must be null",
         });
       }
@@ -274,12 +276,16 @@ class OfferAnalysisValidator {
     if (typeof evidence.text !== "string" || !evidence.text.trim()) {
       throw new OfferAnalysisValidationError({
         validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+        validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+          .EXPLICIT_EVIDENCE_TEXT_INVALID,
         message: "Explicit assertion evidence is required",
       });
     }
     if (evidence.text.length > OfferAnalysisLimits.MAXIMUM_EVIDENCE_LENGTH) {
       throw new OfferAnalysisValidationError({
         validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+        validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+          .EXPLICIT_EVIDENCE_TEXT_TOO_LONG,
         message: "Evidence text is too long",
       });
     }
@@ -310,12 +316,16 @@ class OfferAnalysisValidator {
         if (!effectiveText.includes(item.evidence.text)) {
           throw new OfferAnalysisValidationError({
             validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+            validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+              .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
             message: "Explicit evidence was not found in effective text",
           });
         }
       } else if (item.evidence !== null) {
         throw new OfferAnalysisValidationError({
           validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+          validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+            .INFERRED_EVIDENCE_PRESENT,
           message: "Inferred assertion evidence must be null",
         });
       }
