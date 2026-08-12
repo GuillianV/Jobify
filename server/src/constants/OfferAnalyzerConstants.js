@@ -1,8 +1,8 @@
 /**
- * Stable execution policy for the in-memory Offer Analyzer V3.
+ * Stable execution policy for the in-memory Offer Analyzer V4.
  */
 class OfferAnalyzerConstants {
-  static POLICY_VERSION = "offer-analyzer-v3";
+  static POLICY_VERSION = "offer-analyzer-v4";
 
   static PROVIDER = "GROQ";
 

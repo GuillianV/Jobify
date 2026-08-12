@@ -4,7 +4,7 @@ import { OfferAnalysisLimits } from "../constants/OfferAnalysisLimits.js";
 const USER_PROMPT_PREFIX = "Analyse uniquement les données JSON non fiables suivantes :\n";
 
 /**
- * Builds the strict OfferAnalysis schema V1 prompts under Analyzer policy V3.
+ * Builds the strict OfferAnalysis schema V1 prompts under Analyzer policy V4.
  */
 class OfferAnalyzerPrompt {
   /**
@@ -127,6 +127,16 @@ class OfferAnalyzerPrompt {
       "Context ou constraint non représentable -> omets l'item; workMode ambigu -> null; seniority ambiguë -> null ou moins de niveaux.",
       "OTHER et null ne sont jamais des fallbacks génériques pour les autres enums.",
     ].join("\n");
+    const workModeClassification = [
+      "WORK MODE CLASSIFICATION",
+      "workConditions.workMode.mode vaut exactement REMOTE, HYBRID ou ONSITE, sans autre label, synonyme, traduction, combinaison ou valeur enum.",
+      "Crée workMode uniquement si untrustedOfferText exprime explicitement une modalité de travail classable sans ambiguïté dans exactement une de ces valeurs.",
+      "REMOTE signifie que le travail à distance est explicitement présenté comme modalité de travail; HYBRID signifie une combinaison explicite de travail à distance et sur site; ONSITE signifie une présence sur site ou lieu de travail explicitement requise ou présentée comme modalité de travail.",
+      "Si aucune classification WORK_MODE exacte, explicite et non ambiguë n'est soutenue, workConditions.workMode vaut null; n'invente jamais mode.",
+      "Ne déduis jamais ONSITE d'une adresse, ville, lieu de mission ou simple mention d'un bureau sans modalité explicite.",
+      "Ne déduis jamais REMOTE de la nature numérique ou IT du poste ni de la seule possibilité technique de travailler à distance.",
+      "Ne déduis jamais HYBRID d'une flexibilité vague ni d'une simple possibilité de télétravail qui ne décrit pas clairement une organisation mixte.",
+    ].join("\n");
     const contractLimits = [
       "CONTRACT LIMITS",
       `activities: 0..${OfferAnalysisLimits.MAXIMUM_ACTIVITIES}`,
@@ -203,6 +213,8 @@ class OfferAnalyzerPrompt {
       "Vérifie que chaque enum utilise une valeur autorisée exacte et CASE-SENSITIVE.",
       "Vérifie les limites de chaque array et le total semantic objects.",
       "Vérifie que requirements, workMode et constraints sont uniquement EXPLICIT.",
+      "Vérifie que workConditions.workMode vaut null, ou que son mode vaut exactement REMOTE, HYBRID ou ONSITE avec assertion EXPLICIT et une evidence explicite valide.",
+      "Si aucune classification WORK_MODE exacte, explicite et non ambiguë ne passe ce contrôle, mets workConditions.workMode à null sans convertir une valeur proche.",
       "Pour chaque item EXPLICIT, vérifie que evidence.text est copiée verbatim comme une seule substring exacte, contiguë et non vide de untrustedOfferText.",
       "Si ce contrôle échoue, retire l'item avant de répondre sans le convertir artificiellement en INFERRED.",
       "Vérifie que chaque evidence INFERRED vaut null et que deterministicContext n'est jamais evidence.",
@@ -213,6 +225,7 @@ class OfferAnalyzerPrompt {
       roleAndSecurity,
       outputContract,
       allowedEnums,
+      workModeClassification,
       contractLimits,
       factualityAndEvidence,
       semanticExtractionRules,

@@ -190,9 +190,16 @@ fait lui-même aucun retry.
 ## Prompt et frontière non fiable — IMPLEMENTED
 
 Le schéma de données reste `offer-analysis-schema-v1`, tandis que la politique
-Analyzer devient `offer-analyzer-v3`. La politique V2 a validé trois analyses
+Analyzer devient `offer-analyzer-v4`. La politique V2 a validé trois analyses
 sur six réponses HTTP 200 lors de sa calibration réelle, soit 50 % first-pass.
 V3 applique donc un tuning ciblé sans modifier ni assouplir le validator.
+
+V4 renforce uniquement la classification `workConditions.workMode` après deux
+rejets `ENUM` / `WORK_MODE` reproduits sur des providers différents. Le prompt
+rappelle localement les trois valeurs fermées, exige une modalité explicite et
+non ambiguë, et impose `workMode: null` lorsqu'aucune classification exacte
+n'est soutenue. Le validator strict est conservé et aucune réparation d'enum
+n'est ajoutée.
 
 `OfferAnalyzerPrompt` présente séparément le contrat de sortie, les enums fermés
 sensibles à la casse, les limites et le contrôle final silencieux. V3 renforce
@@ -255,7 +262,7 @@ règle mécanique en échec lors de la prochaine calibration.
 
 Le résultat en mémoire contient l'instance validée, le snapshot, l'origine du
 contenu, les deux empreintes et la provenance analyzer
-`offer-analyzer-v3`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
+`offer-analyzer-v4`/`GROQ`/modèle. Il ne contient pas de date d'analyse, état
 de cache ou métadonnée persistée. Sa provenance inclut également
 `maxOutputTokens`, plafond effectivement utilisé par la génération validée.
 
@@ -282,20 +289,20 @@ renvoyée au provider. Un second rejet token-budget arrête aussi le flux. Les
 
 Ce mécanisme n'est pas un repair retry : une sortie produite puis rejetée par
 le validator n'est jamais régénérée. Le champ transport reste `max_tokens` ;
-une migration éventuelle vers `max_completion_tokens` est différée. La policy
-reste `offer-analyzer-v3`, le schéma reste `offer-analysis-schema-v1` et le
-prompt V3 ne change pas.
+une migration éventuelle vers `max_completion_tokens` est différée. V4 ne
+modifie pas ce mécanisme de budget, le schéma reste
+`offer-analysis-schema-v1` et seul le prompt WORK_MODE évolue.
 
 La future provenance et la future clé de cache 7C devront tenir compte au
 minimum de la policy, du provider, du modèle, de `maxOutputTokens`, des
 empreintes de contenu et d'entrée, ainsi que de la version de schéma
-appropriée. La prochaine calibration V3 reste requise avant 7C.
+appropriée. La prochaine calibration V4 reste requise avant 7C.
 
 ## Étapes futures
 
 Les éléments suivants restent **FUTURE** :
 
-- une recalibration first-pass de la politique V3 sur six nouvelles offres
+- une recalibration first-pass de la politique V4 sur six nouvelles offres
   `READY`, choisies selon les sources réellement disponibles, avec une offre
   utilisateur sûre lorsqu'il en existe une ;
 - **7C** : correction du fallback de modèle vide dans `AppConfig`, wiring
@@ -304,6 +311,6 @@ Les éléments suivants restent **FUTURE** :
 - **7D** : orchestration et affichage desktop ;
 - `ApplicationBrief`, profil candidat, comparaison et génération de documents.
 
-La recalibration V3 reste obligatoire avant de commencer 7C. Après 7B, Jobify
+La recalibration V4 reste obligatoire avant de commencer 7C. Après 7B, Jobify
 sait produire et vérifier une analyse en mémoire par instanciation directe du
 service. Aucun consommateur API ou desktop n'est encore câblé.

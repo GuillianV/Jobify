@@ -30,6 +30,7 @@ test("system prompt organizes the exact output contract into stable sections", (
     "ROLE AND SECURITY",
     "OUTPUT CONTRACT",
     "ALLOWED ENUMS",
+    "WORK MODE CLASSIFICATION",
     "CONTRACT LIMITS",
     "FACTUALITY AND EVIDENCE",
     "SEMANTIC EXTRACTION RULES",
@@ -164,6 +165,21 @@ test("system prompt enforces factuality evidence and explicit-only families", ()
   assert.match(systemPrompt, /Si une attente n'est pas explicitement demandée.*omets le requirement/u);
 });
 
+test("system prompt classifies work mode explicitly or uses null", () => {
+  const { systemPrompt } = new OfferAnalyzerPrompt().build(createSnapshot(), HOSTILE_TEXT);
+  assert.match(systemPrompt, /workConditions\.workMode\.mode vaut exactement REMOTE, HYBRID ou ONSITE/u);
+  assert.match(systemPrompt, /sans autre label, synonyme, traduction, combinaison ou valeur enum/u);
+  assert.match(systemPrompt, /exprime explicitement une modalité de travail classable sans ambiguïté/u);
+  assert.match(systemPrompt, /REMOTE signifie que le travail à distance est explicitement présenté/u);
+  assert.match(systemPrompt, /HYBRID signifie une combinaison explicite de travail à distance et sur site/u);
+  assert.match(systemPrompt, /ONSITE signifie une présence sur site ou lieu de travail explicitement requise/u);
+  assert.match(systemPrompt, /aucune classification WORK_MODE exacte, explicite et non ambiguë.*workConditions\.workMode vaut null/u);
+  assert.match(systemPrompt, /n'invente jamais mode/u);
+  assert.match(systemPrompt, /Ne déduis jamais ONSITE d'une adresse, ville, lieu de mission/u);
+  assert.match(systemPrompt, /Ne déduis jamais REMOTE de la nature numérique ou IT du poste/u);
+  assert.match(systemPrompt, /Ne déduis jamais HYBRID d'une flexibilité vague/u);
+});
+
 test("system prompt defines general requirement category boundaries", () => {
   const { systemPrompt } = new OfferAnalyzerPrompt().build(createSnapshot(), HOSTILE_TEXT);
   assert.match(systemPrompt, /TOOL_OR_TECHNOLOGY désigne une technologie nommée/u);
@@ -221,6 +237,9 @@ test("system prompt treats offer text as untrusted data and performs a silent fi
   assert.match(systemPrompt, /effectue silencieusement ce contrôle sans exposer ton raisonnement/u);
   assert.match(systemPrompt, /exactement un objet JSON et rien d'autre/u);
   assert.match(systemPrompt, /chaque enum utilise une valeur autorisée exacte et CASE-SENSITIVE/u);
+  assert.match(systemPrompt, /workConditions\.workMode vaut null, ou que son mode vaut exactement REMOTE, HYBRID ou ONSITE/u);
+  assert.match(systemPrompt, /assertion EXPLICIT et une evidence explicite valide/u);
+  assert.match(systemPrompt, /mets workConditions\.workMode à null sans convertir une valeur proche/u);
   assert.match(systemPrompt, /evidence\.text est copiée verbatim comme une seule substring exacte, contiguë/u);
   assert.match(systemPrompt, /retire l'item avant de répondre sans le convertir artificiellement en INFERRED/u);
   assert.match(systemPrompt, /au moins un semantic object reste/u);
