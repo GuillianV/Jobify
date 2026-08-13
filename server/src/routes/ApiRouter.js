@@ -3,6 +3,7 @@ import { Router } from "express";
 const OFFERS_ROUTE = "/offres";
 const OFFER_CONTENT_ROUTE = "/offres/:id/contenu";
 const OFFER_PREPARE_ROUTE = "/offres/:id/prepare";
+const OFFER_ANALYSE_ROUTE = "/offres/:id/analyse";
 const OFFER_USER_CONTENT_ROUTE = "/offres/:id/contenu-utilisateur";
 const PROFILES_ROUTE = "/profils";
 const PROFILE_BY_ID_ROUTE = "/profils/:id";
@@ -37,6 +38,9 @@ class ApiRouter {
     });
     router.post(OFFER_PREPARE_ROUTE, (request, response) => {
       this.offerController.prepareOffer(request, response);
+    });
+    router.post(OFFER_ANALYSE_ROUTE, (request, response) => {
+      this.offerController.analyseOffer(request, response);
     });
     router.put(OFFER_USER_CONTENT_ROUTE, (request, response) => {
       this.offerController.replaceUserContent(request, response);

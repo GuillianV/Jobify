@@ -49,6 +49,34 @@ test("API router exposes prepare and user-content intention routes", () => {
   assert.deepEqual(calls, ["prepare", "user-content"]);
 });
 
+test("API router delegates only POST analysis requests to the offer controller", () => {
+  const calls = [];
+  const offerController = {
+    analyseOffer(request, response) {
+      calls.push({ request, response });
+    },
+    prepareOffer() {},
+    replaceUserContent() {},
+    enrichOfferContent() {},
+    searchOffers() {},
+  };
+  const profileController = {
+    listProfiles() {},
+    createProfile() {},
+    deleteProfile() {},
+  };
+  const router = new ApiRouter(offerController, profileController).build();
+  const postRoute = findRoute(router, "/offres/:id/analyse", "post");
+  const getRoute = findRoute(router, "/offres/:id/analyse", "get");
+  const request = { params: { id: "42" } };
+  const response = {};
+
+  assert.notEqual(postRoute, null);
+  assert.equal(getRoute, null);
+  postRoute.route.stack[0].handle(request, response);
+  assert.deepEqual(calls, [{ request, response }]);
+});
+
 test("JSON parser limit remains explicitly bounded above the business text limit", () => {
   assert.equal(ApplicationConstants.JSON_BODY_LIMIT, EXPECTED_JSON_LIMIT);
   assert.equal(

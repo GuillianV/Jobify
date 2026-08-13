@@ -10,6 +10,14 @@ import { OfferSearchService } from "./src/services/OfferSearchService.js";
 import { OfferContentAcquisitionService } from "./src/services/OfferContentAcquisitionService.js";
 import { OfferContentEvaluator } from "./src/services/OfferContentEvaluator.js";
 import { OfferPreparationService } from "./src/services/OfferPreparationService.js";
+import { OfferAnalysisInputProjector } from "./src/services/OfferAnalysisInputProjector.js";
+import { OfferAnalysisNormalizer } from "./src/services/OfferAnalysisNormalizer.js";
+import { OfferAnalysisValidator } from "./src/services/OfferAnalysisValidator.js";
+import { OfferAnalyzerPrompt } from "./src/services/OfferAnalyzerPrompt.js";
+import { GroqJsonClient } from "./src/services/GroqJsonClient.js";
+import { OfferAnalyzerService } from "./src/services/OfferAnalyzerService.js";
+import { OfferAnalysisCacheIdentity } from "./src/services/OfferAnalysisCacheIdentity.js";
+import { OfferAnalysisService } from "./src/services/OfferAnalysisService.js";
 import { HelloWorkUrlPolicy } from "./src/services/HelloWorkUrlPolicy.js";
 import { SemanticRefiner, SYSTEM_PROMPT } from "./src/services/SemanticRefiner.js";
 import { getEligibleRepresentatives } from "./src/services/OfferRepresentativePolicy.js";
@@ -21,6 +29,7 @@ import { SemanticInputProjector } from "./src/services/SemanticInputProjector.js
 import { CommuneResolver } from "./src/services/CommuneResolver.js";
 import { Database } from "./src/persistence/Database.js";
 import { OfferRepository } from "./src/persistence/OfferRepository.js";
+import { OfferAnalysisRepository } from "./src/persistence/OfferAnalysisRepository.js";
 import { SemanticDedupCacheRepository } from "./src/persistence/SemanticDedupCacheRepository.js";
 import { ProfileRepository } from "./src/persistence/ProfileRepository.js";
 import { DatabaseConstants } from "./src/constants/DatabaseConstants.js";
@@ -37,6 +46,7 @@ const databasePath = path.join(
 );
 const database = new Database(databasePath);
 const offerRepository = new OfferRepository(database);
+const offerAnalysisRepository = new OfferAnalysisRepository(database);
 const semanticDedupCacheRepository = new SemanticDedupCacheRepository(database);
 const profileRepository = new ProfileRepository(database);
 
@@ -83,12 +93,42 @@ const offerPreparationService = new OfferPreparationService(
     return new Date().toISOString();
   },
 );
+const offerAnalysisInputProjector = new OfferAnalysisInputProjector();
+const offerAnalysisNormalizer = new OfferAnalysisNormalizer();
+const offerAnalysisValidator = new OfferAnalysisValidator(offerAnalysisNormalizer);
+const offerAnalyzerPrompt = new OfferAnalyzerPrompt();
+const analyzerGroqClient = new GroqJsonClient({
+  apiKey: config.groq.apiKey,
+  fetchImpl: globalThis.fetch,
+});
+const offerAnalyzerConfig = OfferAnalyzerService.buildConfig(config.groq.model);
+const offerAnalyzerService = new OfferAnalyzerService({
+  offerRepository,
+  offerContentEvaluator,
+  inputProjector: offerAnalysisInputProjector,
+  promptBuilder: offerAnalyzerPrompt,
+  groqClient: analyzerGroqClient,
+  analysisValidator: offerAnalysisValidator,
+  config: offerAnalyzerConfig,
+});
+const offerAnalysisService = new OfferAnalysisService({
+  offerPreparationService,
+  inputProjector: offerAnalysisInputProjector,
+  cacheIdentityBuilder: OfferAnalysisCacheIdentity,
+  offerAnalysisRepository,
+  offerAnalyzerService,
+  analysisValidator: offerAnalysisValidator,
+  now: () => {
+    return new Date().toISOString();
+  },
+});
 const offerController = new OfferController(
   offerSearchService,
   communeResolver,
   view,
   offerContentAcquisitionService,
   offerPreparationService,
+  offerAnalysisService,
 );
 const profileController = new ProfileController(profileRepository, view);
 

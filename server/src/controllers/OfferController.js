@@ -1,9 +1,25 @@
 import { SearchCriteria } from "../models/SearchCriteria.js";
 import { JobOffer } from "../models/JobOffer.js";
 import { HttpStatus } from "../constants/HttpStatus.js";
+import { OfferPreparationConstants } from "../constants/OfferPreparationConstants.js";
+import { OfferAnalysisServiceError } from "../services/OfferAnalysisServiceError.js";
+import { OfferAnalyzerError } from "../services/OfferAnalyzerError.js";
 import { OfferPreparationError } from "../services/OfferPreparationError.js";
 
 const CANONICAL_OFFER_ID_PATTERN = /^[1-9]\d*$/u;
+const PUBLIC_ANALYSIS_ERROR = Object.freeze({
+  INVALID_OFFER_ID: "Invalid offer id",
+  OFFER_NOT_FOUND: "Offer not found",
+  OFFER_NOT_READY: "Offer is not ready",
+  ANALYZER_INPUT_TOO_LARGE: "Offer content is too large to analyze",
+  ANALYZER_UNAVAILABLE: "Offer analysis service is unavailable",
+  ANALYZER_TIMEOUT: "Offer analysis service timed out",
+  ANALYZER_RATE_LIMITED: "Offer analysis service is temporarily unavailable",
+  ANALYZER_PROVIDER_ERROR: "Offer analysis provider failed",
+  ANALYZER_PROVIDER_TOKEN_BUDGET: "Offer analysis provider rejected the token budget",
+  ANALYZER_INVALID_OUTPUT: "Offer analysis provider returned an invalid response",
+  INTERNAL_SERVER_ERROR: "Internal server error",
+});
 
 /**
  * Controller exposing the offer search resource of the API.
@@ -16,6 +32,7 @@ class OfferController {
    * @param {import("../views/JsonView.js").JsonView} view - JSON view.
    * @param {import("../services/OfferContentAcquisitionService.js").OfferContentAcquisitionService} offerContentAcquisitionService - DETAIL acquisition service.
    * @param {import("../services/OfferPreparationService.js").OfferPreparationService} offerPreparationService - Preparation flow.
+   * @param {import("../services/OfferAnalysisService.js").OfferAnalysisService} offerAnalysisService - Cached analysis runtime.
    */
   constructor(
     offerSearchService,
@@ -23,12 +40,14 @@ class OfferController {
     view,
     offerContentAcquisitionService,
     offerPreparationService,
+    offerAnalysisService,
   ) {
     this.offerSearchService = offerSearchService;
     this.communeResolver = communeResolver;
     this.view = view;
     this.offerContentAcquisitionService = offerContentAcquisitionService;
     this.offerPreparationService = offerPreparationService;
+    this.offerAnalysisService = offerAnalysisService;
   }
 
   /**
@@ -162,6 +181,159 @@ class OfferController {
       const statusCode = error.statusCode ?? HttpStatus.INTERNAL_SERVER_ERROR;
       this.view.renderError(response, statusCode, error.message);
     }
+  }
+
+  /**
+   * Return one cached or newly generated analysis of an authoritative READY offer.
+   * @param {import("express").Request} request - Incoming request.
+   * @param {import("express").Response} response - Outgoing response.
+   * @returns {Promise<void>} Resolves once the response has been rendered.
+   */
+  async analyseOffer(request, response) {
+    try {
+      const id = this.parseOfferId(request.params.id);
+      const result = await this.offerAnalysisService.analyze(id);
+      this.view.renderSuccess(response, this.toAnalysisApiJson(result));
+    } catch (error) {
+      const mapped = this.mapAnalysisError(error);
+      this.view.renderError(
+        response,
+        mapped.statusCode,
+        mapped.message,
+        mapped.publicMetadata,
+      );
+    }
+  }
+
+  /**
+   * Project one runtime result through the explicit public analysis whitelist.
+   * @param {object} result - Validated OfferAnalysisService result.
+   * @returns {object} Public analysis response.
+   */
+  toAnalysisApiJson(result) {
+    return {
+      analyse: result.analysis.toJson(),
+      cacheHit: result.cacheHit,
+      analyzer: {
+        policyVersion: result.analyzer.policyVersion,
+        schemaVersion: result.analyzer.schemaVersion,
+      },
+      analyzedAt: result.analyzedAt,
+    };
+  }
+
+  /**
+   * Map one expected analysis failure into a safe public HTTP contract.
+   * @param {unknown} error - Runtime failure.
+   * @returns {{statusCode: number, message: string, publicMetadata: object}} Mapping.
+   */
+  mapAnalysisError(error) {
+    if (error instanceof OfferPreparationError) {
+      const notFound = error.statusCode === HttpStatus.NOT_FOUND;
+      return this.buildAnalysisErrorMapping(
+        notFound ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST,
+        notFound ? PUBLIC_ANALYSIS_ERROR.OFFER_NOT_FOUND
+          : PUBLIC_ANALYSIS_ERROR.INVALID_OFFER_ID,
+        notFound ? "OFFER_NOT_FOUND" : "INVALID_OFFER_ID",
+      );
+    }
+    if (error instanceof OfferAnalysisServiceError) {
+      return this.mapAnalysisServiceError(error);
+    }
+    if (error instanceof OfferAnalyzerError) {
+      return this.mapAnalyzerError(error);
+    }
+    return this.buildAnalysisErrorMapping(
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      PUBLIC_ANALYSIS_ERROR.INTERNAL_SERVER_ERROR,
+      "INTERNAL_SERVER_ERROR",
+    );
+  }
+
+  /**
+   * Map one closed runtime orchestration error.
+   * @param {OfferAnalysisServiceError} error - Runtime error.
+   * @returns {{statusCode: number, message: string, publicMetadata: object}} Mapping.
+   */
+  mapAnalysisServiceError(error) {
+    if (error.code === OfferAnalysisServiceError.CODE.OFFER_NOT_READY) {
+      const publicMetadata = { code: error.code };
+      const allowedStatuses = [
+        OfferPreparationConstants.STATUS.NEEDS_PROVIDER_ACQUISITION,
+        OfferPreparationConstants.STATUS.NEEDS_USER_TEXT,
+      ];
+      if (allowedStatuses.includes(error.safeDetails.prepareStatus)) {
+        publicMetadata.prepareStatus = error.safeDetails.prepareStatus;
+      }
+      return {
+        statusCode: HttpStatus.CONFLICT,
+        message: PUBLIC_ANALYSIS_ERROR.OFFER_NOT_READY,
+        publicMetadata,
+      };
+    }
+    return this.buildAnalysisErrorMapping(
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      PUBLIC_ANALYSIS_ERROR.INTERNAL_SERVER_ERROR,
+      OfferAnalysisServiceError.CODE.CACHE_PERSISTENCE_ERROR,
+    );
+  }
+
+  /**
+   * Map one closed Analyzer failure without exposing its safeDetails or cause.
+   * @param {OfferAnalyzerError} error - Analyzer error.
+   * @returns {{statusCode: number, message: string, publicMetadata: object}} Mapping.
+   */
+  mapAnalyzerError(error) {
+    const mappings = {
+      [OfferAnalyzerError.CODE.ANALYZER_INPUT_TOO_LARGE]: {
+        statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+        message: PUBLIC_ANALYSIS_ERROR.ANALYZER_INPUT_TOO_LARGE,
+      },
+      [OfferAnalyzerError.CODE.ANALYZER_UNAVAILABLE]: {
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        message: PUBLIC_ANALYSIS_ERROR.ANALYZER_UNAVAILABLE,
+      },
+      [OfferAnalyzerError.CODE.ANALYZER_TIMEOUT]: {
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        message: PUBLIC_ANALYSIS_ERROR.ANALYZER_TIMEOUT,
+      },
+      [OfferAnalyzerError.CODE.ANALYZER_RATE_LIMITED]: {
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        message: PUBLIC_ANALYSIS_ERROR.ANALYZER_RATE_LIMITED,
+      },
+      [OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR]: {
+        statusCode: HttpStatus.BAD_GATEWAY,
+        message: PUBLIC_ANALYSIS_ERROR.ANALYZER_PROVIDER_ERROR,
+      },
+      [OfferAnalyzerError.CODE.ANALYZER_PROVIDER_TOKEN_BUDGET]: {
+        statusCode: HttpStatus.BAD_GATEWAY,
+        message: PUBLIC_ANALYSIS_ERROR.ANALYZER_PROVIDER_TOKEN_BUDGET,
+      },
+      [OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT]: {
+        statusCode: HttpStatus.BAD_GATEWAY,
+        message: PUBLIC_ANALYSIS_ERROR.ANALYZER_INVALID_OUTPUT,
+      },
+    };
+    const mapped = mappings[error.code];
+    if (!mapped) {
+      return this.buildAnalysisErrorMapping(
+        HttpStatus.BAD_GATEWAY,
+        PUBLIC_ANALYSIS_ERROR.ANALYZER_PROVIDER_ERROR,
+        OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR,
+      );
+    }
+    return this.buildAnalysisErrorMapping(mapped.statusCode, mapped.message, error.code);
+  }
+
+  /**
+   * Build one flat JsonView error mapping from controlled constants only.
+   * @param {number} statusCode - Public HTTP status.
+   * @param {string} message - Safe constant message.
+   * @param {string} code - Public closed error code.
+   * @returns {{statusCode: number, message: string, publicMetadata: object}} Mapping.
+   */
+  buildAnalysisErrorMapping(statusCode, message, code) {
+    return { statusCode, message, publicMetadata: { code } };
   }
 
   /**

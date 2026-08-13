@@ -18,11 +18,12 @@ class JsonView {
    * Render an error JSON response.
    * @param {import("express").Response} response - The Express response.
    * @param {number} statusCode - The HTTP status code to send.
-   * @param {string} errorMessage - The error message to expose.
+   * @param {string} errorMessage - The safe error message to expose.
+   * @param {object} [publicMetadata] - Explicitly whitelisted public metadata.
    * @returns {void}
    */
-  renderError(response, statusCode, errorMessage) {
-    response.status(statusCode).json({ error: errorMessage });
+  renderError(response, statusCode, errorMessage, publicMetadata = {}) {
+    response.status(statusCode).json({ error: errorMessage, ...publicMetadata });
   }
 }
 
