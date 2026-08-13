@@ -124,7 +124,7 @@ function createHarness(overrides = {}) {
         return { validated: true };
       },
     },
-    config: OfferAnalyzerService.buildConfig(MODEL),
+    config: overrides.config ?? OfferAnalyzerService.buildConfig(MODEL),
   };
   return { service: new OfferAnalyzerService(dependencies), calls, input, raw, offer };
 }
@@ -175,12 +175,103 @@ test("non-sufficient authoritative evaluations stop all downstream work", async 
   }
 });
 
+test("projected input analysis uses only the supplied projection", async () => {
+  const harness = createHarness();
+  const result = await harness.service.analyzeProjectedInput(harness.input);
+
+  assert.equal(harness.calls.repository, 0);
+  assert.equal(harness.calls.evaluator, 0);
+  assert.equal(harness.calls.projector, 0);
+  assert.equal(harness.calls.prompt, 1);
+  assert.equal(harness.calls.groq, 1);
+  assert.equal(harness.calls.validator, 1);
+  assert.equal(result.offerAnalysis.validated, true);
+  assert.equal(result.offerSnapshot, harness.input.offerSnapshot);
+  assert.equal(result.effectiveContentOrigin, harness.input.effectiveContentOrigin);
+  assert.equal(result.contentFingerprint, harness.input.contentFingerprint);
+  assert.equal(
+    result.deterministicInputFingerprint,
+    harness.input.deterministicInputFingerprint,
+  );
+});
+
+test("projected input analysis rejects malformed public inputs before downstream work", async () => {
+  const invalidInputs = [
+    null,
+    [],
+    {},
+    { ...createInput(), effectiveText: "" },
+    { ...createInput(), offerSnapshot: null },
+    { ...createInput(), effectiveContentOrigin: null },
+    { ...createInput(), contentFingerprint: "" },
+    { ...createInput(), deterministicInputFingerprint: 42 },
+  ];
+  for (const input of invalidInputs) {
+    const harness = createHarness();
+    await assert.rejects(
+      harness.service.analyzeProjectedInput(input),
+      TypeError,
+    );
+    assert.equal(harness.calls.repository, 0);
+    assert.equal(harness.calls.evaluator, 0);
+    assert.equal(harness.calls.projector, 0);
+    assert.equal(harness.calls.prompt, 0);
+    assert.equal(harness.calls.groq, 0);
+    assert.equal(harness.calls.validator, 0);
+  }
+});
+
+test("execution metadata and analyzer config are immutable construction snapshots", async () => {
+  const config = OfferAnalyzerService.buildConfig(MODEL);
+  const expected = {
+    policyVersion: config.policyVersion,
+    schemaVersion: OfferAnalysisConstants.SCHEMA_VERSION,
+    provider: config.provider,
+    model: config.model,
+    configuredMaxOutputTokens: config.maxTokens,
+  };
+  const requests = [];
+  const raw = createAnalysis();
+  const harness = createHarness({
+    config,
+    raw,
+    groqClient: {
+      async completeJson(request) {
+        requests.push(structuredClone(request));
+        return raw;
+      },
+    },
+  });
+
+  const metadata = harness.service.getExecutionMetadata();
+  assert.deepEqual(metadata, expected);
+  assert.equal(Object.isFrozen(metadata), true);
+  try {
+    metadata.model = "mutated-returned-model";
+  } catch {
+    // Assignment to a frozen object throws in strict mode and is ignored otherwise.
+  }
+  config.policyVersion = "mutated-policy";
+  config.model = "mutated-caller-model";
+  config.maxTokens = 1;
+
+  assert.deepEqual(harness.service.getExecutionMetadata(), expected);
+  const result = await harness.service.analyzeProjectedInput(harness.input);
+  assert.equal(requests[0].model, MODEL);
+  assert.equal(requests[0].maxTokens, OfferAnalyzerConstants.MAX_OUTPUT_TOKENS);
+  assert.equal(result.analyzer.policyVersion, expected.policyVersion);
+  assert.equal(result.analyzer.model, MODEL);
+  assert.equal(result.analyzer.maxOutputTokens, expected.configuredMaxOutputTokens);
+});
+
 test("oversized exact input is rejected without prompt, truncation or Groq", async () => {
   const text = "a".repeat(OfferAnalyzerConstants.MAX_INPUT_LENGTH + 1);
   const harness = createHarness({ input: createInput(text) });
   const error = await captureError(harness.service.analyze(OFFER_ID));
   assert.equal(error.code, OfferAnalyzerError.CODE.ANALYZER_INPUT_TOO_LARGE);
   assert.equal(harness.calls.projector, 1);
+  assert.equal(harness.calls.repository, 1);
+  assert.equal(harness.calls.evaluator, 1);
   assert.equal(harness.calls.prompt, 0);
   assert.equal(harness.calls.groq, 0);
 });
@@ -429,6 +520,8 @@ test("successful result is exact and does not mutate offer, input or raw output"
       maxOutputTokens: OfferAnalyzerConstants.MAX_OUTPUT_TOKENS,
     },
   });
+  assert.equal(harness.calls.repository, 1);
+  assert.equal(harness.calls.evaluator, 1);
   assert.equal(harness.calls.projector, 1);
   assert.equal(harness.calls.prompt, 1);
   assert.equal(harness.calls.groq, 1);
@@ -458,7 +551,7 @@ test("recognized token-budget admission failure retries once with a safe lower c
     },
   });
 
-  const result = await harness.service.analyze(OFFER_ID);
+  const result = await harness.service.analyzeProjectedInput(harness.input);
   assert.equal(requests.length, TOKEN_BUDGET_ATTEMPTS);
   assert.equal(requests[0].maxTokens, OfferAnalyzerConstants.MAX_OUTPUT_TOKENS);
   assert.equal(requests[1].maxTokens, RETRY_MAX_TOKENS);

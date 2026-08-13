@@ -1,4 +1,5 @@
 import { OfferAnalyzerConstants } from "../constants/OfferAnalyzerConstants.js";
+import { OfferAnalysisConstants } from "../constants/OfferAnalysisConstants.js";
 import { OfferContentEvaluationConstants } from "../constants/OfferContentEvaluationConstants.js";
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
 import { OfferAnalysisValidationError } from "./OfferAnalysisValidationError.js";
@@ -34,7 +35,14 @@ class OfferAnalyzerService {
     this.promptBuilder = promptBuilder;
     this.groqClient = groqClient;
     this.analysisValidator = analysisValidator;
-    this.config = config;
+    this.config = Object.freeze({ ...config });
+    this.executionMetadata = Object.freeze({
+      policyVersion: this.config.policyVersion,
+      schemaVersion: OfferAnalysisConstants.SCHEMA_VERSION,
+      provider: this.config.provider,
+      model: this.config.model,
+      configuredMaxOutputTokens: this.config.maxTokens,
+    });
   }
 
   /**
@@ -59,6 +67,17 @@ class OfferAnalyzerService {
       );
     }
     const input = this.inputProjector.build(offer);
+    return await this.analyzeProjectedInput(input);
+  }
+
+  /**
+   * Analyze one precomputed deterministic input without reloading or reprojecting its offer.
+   * @param {object} projectedInput - Exact output of OfferAnalysisInputProjector.build.
+   * @returns {Promise<object>} Validated in-memory analysis and deterministic provenance.
+   */
+  async analyzeProjectedInput(projectedInput) {
+    this.validateProjectedInput(projectedInput);
+    const input = projectedInput;
     if (input.effectiveText.length > this.config.maxInputLength) {
       throw new OfferAnalyzerError(OfferAnalyzerError.CODE.ANALYZER_INPUT_TOO_LARGE);
     }
@@ -102,6 +121,45 @@ class OfferAnalyzerService {
         maxOutputTokens: completion.maxOutputTokens,
       },
     };
+  }
+
+  /**
+   * Expose immutable pre-network execution metadata for deterministic cache identity.
+   * @returns {Readonly<object>} Stable analyzer execution metadata.
+   */
+  getExecutionMetadata() {
+    return this.executionMetadata;
+  }
+
+  /**
+   * Validate the minimal deterministic projection contract consumed by the analyzer.
+   * @param {object} projectedInput - Projected input candidate.
+   * @returns {void}
+   */
+  validateProjectedInput(projectedInput) {
+    if (projectedInput === null || typeof projectedInput !== "object"
+      || Array.isArray(projectedInput)) {
+      throw new TypeError("Offer analyzer requires a projected input object");
+    }
+    if (typeof projectedInput.effectiveText !== "string"
+      || !projectedInput.effectiveText) {
+      throw new TypeError("Offer analyzer projected input requires effective text");
+    }
+    if (projectedInput.offerSnapshot === null
+      || typeof projectedInput.offerSnapshot !== "object"
+      || Array.isArray(projectedInput.offerSnapshot)) {
+      throw new TypeError("Offer analyzer projected input requires an offer snapshot");
+    }
+    const requiredStrings = [
+      "effectiveContentOrigin",
+      "contentFingerprint",
+      "deterministicInputFingerprint",
+    ];
+    if (requiredStrings.some((field) => {
+      return typeof projectedInput[field] !== "string" || !projectedInput[field];
+    })) {
+      throw new TypeError("Offer analyzer projected input provenance is invalid");
+    }
   }
 
   /**
