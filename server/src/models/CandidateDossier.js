@@ -5,6 +5,22 @@ import { CandidateDossierConstants } from "../constants/CandidateDossierConstant
  */
 class CandidateDossier {
   /**
+   * Create the unique official empty CandidateDossier V1 value.
+   * @returns {CandidateDossier} Deeply immutable empty dossier.
+   */
+  static empty() {
+    return new CandidateDossier({
+      schemaVersion: CandidateDossierConstants.SCHEMA_VERSION,
+      experiences: [],
+      projects: [],
+      skills: [],
+      education: [],
+      languages: [],
+      softSkills: [],
+    });
+  }
+
+  /**
    * Create a dossier from an already validated CandidateDossier V1 value.
    * @param {object} value - Validated candidate facts without derived information.
    */

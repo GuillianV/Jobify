@@ -43,3 +43,24 @@ test("CandidateDossier toJson is deterministic and deeply detached", () => {
   assert.deepEqual(dossier.toJson(), emptyValue());
   assert.notEqual(first, second);
 });
+
+test("CandidateDossier empty creates independent official immutable domain values", () => {
+  const first = CandidateDossier.empty();
+  const second = CandidateDossier.empty();
+  const firstJson = first.toJson();
+
+  assert.equal(first instanceof CandidateDossier, true);
+  assert.equal(second instanceof CandidateDossier, true);
+  assert.deepEqual(firstJson, emptyValue());
+  assert.equal(first.schemaVersion, CandidateDossierConstants.SCHEMA_VERSION);
+  assert.equal(Object.isFrozen(first), true);
+  for (const key of [
+    "experiences", "projects", "skills", "education", "languages", "softSkills",
+  ]) {
+    assert.equal(Object.isFrozen(first[key]), true);
+    assert.notEqual(first[key], second[key]);
+  }
+  firstJson.experiences.push({ id: "external" });
+  assert.deepEqual(first.toJson(), emptyValue());
+  assert.deepEqual(second.toJson(), emptyValue());
+});

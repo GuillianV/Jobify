@@ -3,6 +3,7 @@ import { AppConfig } from "./src/config/AppConfig.js";
 import { JsonView } from "./src/views/JsonView.js";
 import { OfferController } from "./src/controllers/OfferController.js";
 import { ProfileController } from "./src/controllers/ProfileController.js";
+import { CandidateDossierController } from "./src/controllers/CandidateDossierController.js";
 import { FranceTravailConnector } from "./src/connectors/FranceTravailConnector.js";
 import { AdzunaConnector } from "./src/connectors/AdzunaConnector.js";
 import { CareerjetConnector } from "./src/connectors/CareerjetConnector.js";
@@ -32,6 +33,9 @@ import { OfferRepository } from "./src/persistence/OfferRepository.js";
 import { OfferAnalysisRepository } from "./src/persistence/OfferAnalysisRepository.js";
 import { SemanticDedupCacheRepository } from "./src/persistence/SemanticDedupCacheRepository.js";
 import { ProfileRepository } from "./src/persistence/ProfileRepository.js";
+import { CandidateDossierRepository } from "./src/persistence/CandidateDossierRepository.js";
+import { CandidateDossierService } from "./src/services/CandidateDossierService.js";
+import { CandidateDossierValidator } from "./src/services/CandidateDossierValidator.js";
 import { DatabaseConstants } from "./src/constants/DatabaseConstants.js";
 import { ApiRouter } from "./src/routes/ApiRouter.js";
 import { Application } from "./src/Application.js";
@@ -49,6 +53,7 @@ const offerRepository = new OfferRepository(database);
 const offerAnalysisRepository = new OfferAnalysisRepository(database);
 const semanticDedupCacheRepository = new SemanticDedupCacheRepository(database);
 const profileRepository = new ProfileRepository(database);
+const candidateDossierRepository = new CandidateDossierRepository(database);
 
 const connectors = [
   new FranceTravailConnector(config.franceTravail),
@@ -131,8 +136,24 @@ const offerController = new OfferController(
   offerAnalysisService,
 );
 const profileController = new ProfileController(profileRepository, view);
+const candidateDossierValidator = new CandidateDossierValidator();
+const candidateDossierService = new CandidateDossierService({
+  candidateDossierRepository,
+  candidateDossierValidator,
+  now: () => {
+    return new Date().toISOString();
+  },
+});
+const candidateDossierController = new CandidateDossierController(
+  candidateDossierService,
+  view,
+);
 
-const apiRouter = new ApiRouter(offerController, profileController);
+const apiRouter = new ApiRouter(
+  offerController,
+  profileController,
+  candidateDossierController,
+);
 const application = new Application(config, apiRouter);
 
 application.start();

@@ -38,7 +38,12 @@ test("API router exposes prepare and user-content intention routes", () => {
     createProfile() {},
     deleteProfile() {},
   };
-  const router = new ApiRouter(offerController, profileController).build();
+  const candidateDossierController = { getDossier() {}, saveDossier() {} };
+  const router = new ApiRouter(
+    offerController,
+    profileController,
+    candidateDossierController,
+  ).build();
   const prepareRoute = findRoute(router, "/offres/:id/prepare", "post");
   const userContentRoute = findRoute(router, "/offres/:id/contenu-utilisateur", "put");
 
@@ -65,7 +70,12 @@ test("API router delegates only POST analysis requests to the offer controller",
     createProfile() {},
     deleteProfile() {},
   };
-  const router = new ApiRouter(offerController, profileController).build();
+  const candidateDossierController = { getDossier() {}, saveDossier() {} };
+  const router = new ApiRouter(
+    offerController,
+    profileController,
+    candidateDossierController,
+  ).build();
   const postRoute = findRoute(router, "/offres/:id/analyse", "post");
   const getRoute = findRoute(router, "/offres/:id/analyse", "get");
   const request = { params: { id: "42" } };
@@ -75,6 +85,36 @@ test("API router delegates only POST analysis requests to the offer controller",
   assert.equal(getRoute, null);
   postRoute.route.stack[0].handle(request, response);
   assert.deepEqual(calls, [{ request, response }]);
+});
+
+test("API router delegates only GET and PUT singleton candidate dossier requests", () => {
+  const calls = [];
+  const candidateDossierController = {
+    getDossier(request, response) {
+      calls.push({ method: "GET", request, response });
+    },
+    saveDossier(request, response) {
+      calls.push({ method: "PUT", request, response });
+    },
+  };
+  const router = new ApiRouter({}, {}, candidateDossierController).build();
+  const getRoute = findRoute(router, "/dossier-candidat", "get");
+  const putRoute = findRoute(router, "/dossier-candidat", "put");
+  const request = { body: { schemaVersion: "candidate-dossier-schema-v1" } };
+  const response = {};
+
+  assert.notEqual(getRoute, null);
+  assert.notEqual(putRoute, null);
+  for (const method of ["post", "patch", "delete"]) {
+    assert.equal(findRoute(router, "/dossier-candidat", method), null);
+  }
+  assert.equal(findRoute(router, "/dossier-candidat/:id", "get"), null);
+  getRoute.route.stack[0].handle(request, response);
+  putRoute.route.stack[0].handle(request, response);
+  assert.deepEqual(calls, [
+    { method: "GET", request, response },
+    { method: "PUT", request, response },
+  ]);
 });
 
 test("JSON parser limit remains explicitly bounded above the business text limit", () => {

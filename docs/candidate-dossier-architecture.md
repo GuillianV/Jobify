@@ -37,12 +37,30 @@ will not compare work mode or travel, schedule and operational constraints with
 CandidateDossier. Choosing to apply only disables that matching dimension; it does
 not create mobility, availability or acceptance claims.
 
-## 8A.1 scope
+## Domain validation
 
 The model is immutable, serializes only its public factual contract and is built
 only after strict validation of exact keys, limits, IDs, enums and dates. Unknown
 fields are rejected and no repair or semantic normalization occurs.
 
-8A.1 adds no persistence, database schema, API, UI, cache, LLM integration,
-ApplicationBrief or matching logic. Later phases may add storage and use stable
-item IDs as the basis for validated evidence references.
+Validation occurs in the service boundary, never in the repository. Invalid PUT
+input remains a user validation error, while an invalid persisted payload is a
+safe persistence failure. No repair or semantic normalization occurs.
+
+## Singleton persistence and API
+
+The shared SQLite database owns one `candidate_dossier` row constrained to the
+singleton key `1`. It stores the complete dossier as a JSON payload with a
+separate `updated_at` timestamp. The repository parses JSON only and performs an
+atomic full replacement; it does not import the model or validator.
+
+`GET /api/dossier-candidat` returns the validated persisted dossier. When no row
+exists, it returns `CandidateDossier.empty()` with `updatedAt: null` and performs
+no database write. `PUT /api/dossier-candidat` accepts the complete
+CandidateDossier body directly and atomically replaces the singleton after strict
+validation. Only GET and PUT exist: there is no POST, PATCH, DELETE or ID route.
+
+Persistence metadata remains outside the domain. V1 has no candidate dossier ID,
+revision, fingerprint or cache. `SearchProfile` and its `profiles` table remain a
+distinct concern. No CandidateDossier UI, ApplicationBrief, matching logic or LLM
+integration exists yet.

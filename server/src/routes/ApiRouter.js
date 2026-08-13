@@ -7,6 +7,7 @@ const OFFER_ANALYSE_ROUTE = "/offres/:id/analyse";
 const OFFER_USER_CONTENT_ROUTE = "/offres/:id/contenu-utilisateur";
 const PROFILES_ROUTE = "/profils";
 const PROFILE_BY_ID_ROUTE = "/profils/:id";
+const CANDIDATE_DOSSIER_ROUTE = "/dossier-candidat";
 
 /**
  * Builds the Express router exposing the public API routes.
@@ -16,10 +17,12 @@ class ApiRouter {
    * Create the router builder with its controller dependencies.
    * @param {import("../controllers/OfferController.js").OfferController} offerController - The offer controller.
    * @param {import("../controllers/ProfileController.js").ProfileController} profileController - The profile controller.
+   * @param {import("../controllers/CandidateDossierController.js").CandidateDossierController} candidateDossierController - Singleton dossier controller.
    */
-  constructor(offerController, profileController) {
+  constructor(offerController, profileController, candidateDossierController) {
     this.offerController = offerController;
     this.profileController = profileController;
+    this.candidateDossierController = candidateDossierController;
   }
 
   /**
@@ -53,6 +56,12 @@ class ApiRouter {
     });
     router.delete(PROFILE_BY_ID_ROUTE, (request, response) => {
       this.profileController.deleteProfile(request, response);
+    });
+    router.get(CANDIDATE_DOSSIER_ROUTE, (request, response) => {
+      this.candidateDossierController.getDossier(request, response);
+    });
+    router.put(CANDIDATE_DOSSIER_ROUTE, (request, response) => {
+      this.candidateDossierController.saveDossier(request, response);
     });
     return router;
   }
