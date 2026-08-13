@@ -16,6 +16,7 @@ class AppConfig {
    */
   constructor(environment) {
     const parsedPort = Number.parseInt(environment.PORT, NumberConstants.DECIMAL_RADIX);
+    const groqModel = environment.GROQ_MODEL?.trim();
     this.port = Number.isNaN(parsedPort) ? DEFAULT_PORT : parsedPort;
     this.host = environment.HOST ?? DEFAULT_HOST;
     this.franceTravail = {
@@ -32,7 +33,7 @@ class AppConfig {
     };
     this.groq = {
       apiKey: environment.GROQ_API_KEY ?? "",
-      model: environment.GROQ_MODEL ?? GroqConstants.DEFAULT_MODEL,
+      model: groqModel || GroqConstants.DEFAULT_MODEL,
     };
   }
 
