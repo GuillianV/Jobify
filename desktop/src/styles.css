@@ -65,3 +65,38 @@ body {
   margin: 0;
   background-color: var(--color-surface);
 }
+
+/* Flatpickr reste aligné sur les jetons Jobify sans remplacer son thème interne. */
+.flatpickr-calendar {
+  font-family: var(--font-sans);
+}
+
+.flatpickr-monthSelect-month.selected,
+.flatpickr-monthSelect-month.startRange,
+.flatpickr-monthSelect-month.endRange {
+  background: var(--color-brand-600);
+  border-color: var(--color-brand-600);
+}
+
+@media (prefers-color-scheme: dark) {
+  .flatpickr-calendar,
+  .flatpickr-months .flatpickr-month,
+  .flatpickr-months .flatpickr-prev-month,
+  .flatpickr-months .flatpickr-next-month {
+    background: var(--color-surface-raised);
+    color: var(--color-body);
+    fill: var(--color-body);
+  }
+
+  .flatpickr-current-month .flatpickr-monthDropdown-months,
+  .flatpickr-current-month input.cur-year,
+  .flatpickr-monthSelect-month {
+    color: var(--color-body);
+  }
+
+  .flatpickr-monthSelect-month:hover,
+  .flatpickr-monthSelect-month:focus {
+    background: var(--color-brand-800);
+    border-color: var(--color-brand-800);
+  }
+}

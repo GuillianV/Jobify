@@ -1,6 +1,9 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const path = require("path");
 const { WindowConfig } = require("./WindowConfig.cjs");
+const {
+  UnsavedChangesUnloadGuard,
+} = require("./UnsavedChangesUnloadGuard.cjs");
 const { HelloWorkScraper } = require("./scrapers/HelloWorkScraper.cjs");
 const { HelloWorkUrlPolicy } = require("./scrapers/HelloWorkUrlPolicy.cjs");
 const {
@@ -22,6 +25,7 @@ class MainWindow {
    */
   constructor() {
     this.browserWindow = null;
+    this.unsavedChangesUnloadGuard = new UnsavedChangesUnloadGuard(dialog);
   }
 
   /**
@@ -39,6 +43,7 @@ class MainWindow {
         nodeIntegration: false,
       },
     });
+    this.unsavedChangesUnloadGuard.attach(this.browserWindow);
     this.load();
   }
 

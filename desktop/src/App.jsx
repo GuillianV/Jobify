@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OfferCard } from "./components/OfferCard.jsx";
 import { OfferDetail } from "./components/OfferDetail.jsx";
+import { CandidateDossierView } from "./components/CandidateDossierView.jsx";
 import { DISTANCE_OPTIONS_KM, DEFAULT_DISTANCE_KM } from "./constants/searchFilters.js";
 import {
   acquireProviderContent,
@@ -25,6 +26,8 @@ const STATUS_OK = "ok";
 const STATUS_ERROR = "error";
 const DEFAULT_KEYWORDS = "node.js";
 const DEFAULT_CITY = "Annecy";
+const VIEW_OFFERS = "offers";
+const VIEW_CANDIDATE = "candidate";
 
 /**
  * Scrape HelloWork client-side through the Electron bridge. Best-effort: any
@@ -134,6 +137,8 @@ async function deleteProfile(id) {
  * @returns {JSX.Element} The rendered application.
  */
 function App() {
+  const [activeView, setActiveView] = useState(VIEW_OFFERS);
+  const [candidateViewOpened, setCandidateViewOpened] = useState(false);
   const [keywords, setKeywords] = useState(DEFAULT_KEYWORDS);
   const [city, setCity] = useState(DEFAULT_CITY);
   const [distanceKm, setDistanceKm] = useState(DEFAULT_DISTANCE_KM);
@@ -277,6 +282,13 @@ function App() {
 
   const offerPlural = offers.length > 1 ? "s" : "";
 
+  const handleViewChange = (view) => {
+    setActiveView(view);
+    if (view === VIEW_CANDIDATE) {
+      setCandidateViewOpened(true);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-surface font-sans text-body">
       <header className="border-b border-border bg-surface-raised">
@@ -287,7 +299,35 @@ function App() {
           <p className="mt-1 text-sm text-muted">
             Toutes les offres, normalisées, prêtes. L'humain décide.
           </p>
-          <form onSubmit={handleSubmit} className="mt-4 flex flex-wrap gap-3">
+          <nav className="mt-4 flex gap-2" aria-label="Navigation principale">
+            <button
+              type="button"
+              onClick={() => {
+                handleViewChange(VIEW_OFFERS);
+              }}
+              aria-current={activeView === VIEW_OFFERS ? "page" : undefined}
+              className={activeView === VIEW_OFFERS
+                ? "rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
+                : "rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted transition hover:border-brand-400 hover:text-body"}
+            >
+              Offres
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleViewChange(VIEW_CANDIDATE);
+              }}
+              aria-current={activeView === VIEW_CANDIDATE ? "page" : undefined}
+              className={activeView === VIEW_CANDIDATE
+                ? "rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
+                : "rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted transition hover:border-brand-400 hover:text-body"}
+            >
+              Dossier candidat
+            </button>
+          </nav>
+
+          <div hidden={activeView !== VIEW_OFFERS}>
+            <form onSubmit={handleSubmit} className="mt-4 flex flex-wrap gap-3">
             <input
               type="text"
               value={keywords}
@@ -327,9 +367,9 @@ function App() {
             >
               Rechercher
             </button>
-          </form>
+            </form>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleSaveProfile}
@@ -365,11 +405,15 @@ function App() {
                 </span>
               );
             })}
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-6 py-6">
+      <main
+        hidden={activeView !== VIEW_OFFERS}
+        className="mx-auto max-w-4xl px-6 py-6"
+      >
         {status === STATUS_LOADING ? (
           <p className="text-muted">Recherche des offres…</p>
         ) : null}
@@ -407,7 +451,13 @@ function App() {
         ) : null}
       </main>
 
-      {selectedOffer ? (
+      {candidateViewOpened ? (
+        <div hidden={activeView !== VIEW_CANDIDATE}>
+          <CandidateDossierView />
+        </div>
+      ) : null}
+
+      {selectedOffer && activeView === VIEW_OFFERS ? (
         <OfferDetail
           offer={selectedOffer}
           preparationState={preparationState}
