@@ -3,10 +3,12 @@ import { ContractBadge } from "./ContractBadge.jsx";
 import { formatSalary, formatDateTime, openExternal } from "./format.js";
 import { OfferPreparationConstants } from "../constants/OfferPreparationConstants.js";
 import { isValidUserTextDraft } from "../services/OfferPreparationOrchestrator.js";
+import { ApplicationBriefPanel } from "./ApplicationBriefPanel.jsx";
 
 const UNKNOWN_COMPANY = "Entreprise non précisée";
 const NO_DESCRIPTION = "Pas de description fournie par la source.";
 const TRUNCATION_MARKERS = ["…", "..."];
+const DIALOG_TITLE_ID = "offer-detail-title";
 
 /**
  * Tell whether a description was truncated by its source, based on a trailing
@@ -52,6 +54,10 @@ function getRetryLabel(retryKind) {
  * @param {Function} props.onSubmitUserText - Submits the controlled user text.
  * @param {Function} props.onUserTextDraftChange - Updates the controlled draft.
  * @param {Function} props.onRetry - Retries the current failed operation.
+ * @param {object} props.applicationBriefState - Controlled brief lifecycle state.
+ * @param {boolean} props.candidateHasUnsavedChanges - Whether saved candidate data is stale.
+ * @param {Function} props.onAnalyzeApplication - Starts explicit brief generation.
+ * @param {Function} props.onRetryApplication - Retries explicit brief generation.
  * @returns {JSX.Element} The rendered modal.
  */
 function OfferDetail({
@@ -62,6 +68,10 @@ function OfferDetail({
   onSubmitUserText,
   onUserTextDraftChange,
   onRetry,
+  applicationBriefState,
+  candidateHasUnsavedChanges,
+  onAnalyzeApplication,
+  onRetryApplication,
 }) {
   useEffect(() => {
     const handleKey = (event) => {
@@ -93,11 +103,14 @@ function OfferDetail({
     >
       <div
         onClick={stopPropagation}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={DIALOG_TITLE_ID}
         className="w-full max-w-2xl rounded-2xl border border-border bg-surface-raised p-6 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="font-display text-xl font-bold leading-snug">
+            <h2 id={DIALOG_TITLE_ID} className="font-display text-xl font-bold leading-snug">
               {offer.title}
             </h2>
             <p className="mt-1 text-sm text-muted">
@@ -234,6 +247,14 @@ function OfferDetail({
             </div>
           ) : null}
         </section>
+
+        <ApplicationBriefPanel
+          state={applicationBriefState}
+          offerReady={preparationState.uiStatus === OfferPreparationConstants.UI_STATUS.READY}
+          candidateHasUnsavedChanges={candidateHasUnsavedChanges}
+          onAnalyze={onAnalyzeApplication}
+          onRetry={onRetryApplication}
+        />
 
         <div className="mt-6 flex justify-end">
           <button

@@ -133,9 +133,11 @@ function formatUpdatedAt(updatedAt) {
 
 /**
  * Render the lazy singleton CandidateDossier lifecycle and section shell.
+ * @param {object} props - Component properties.
+ * @param {Function} props.onUnsavedChangesChange - Reports only whether saved data is stale.
  * @returns {JSX.Element} Candidate dossier view.
  */
-function CandidateDossierView() {
+function CandidateDossierView({ onUnsavedChangesChange }) {
   const [savedDossier, setSavedDossier] = useState(null);
   const [draftDossier, setDraftDossier] = useState(null);
   const [updatedAt, setUpdatedAt] = useState(null);
@@ -184,6 +186,10 @@ function CandidateDossierView() {
   useEffect(() => {
     hasUnsavedChangesRef.current = hasUnsavedChanges;
   }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    onUnsavedChangesChange(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onUnsavedChangesChange]);
 
   useEffect(() => {
     const handleBeforeUnload = (event) => {

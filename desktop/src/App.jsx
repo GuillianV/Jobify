@@ -3,6 +3,7 @@ import { OfferCard } from "./components/OfferCard.jsx";
 import { OfferDetail } from "./components/OfferDetail.jsx";
 import { CandidateDossierView } from "./components/CandidateDossierView.jsx";
 import { DISTANCE_OPTIONS_KM, DEFAULT_DISTANCE_KM } from "./constants/searchFilters.js";
+import { OfferPreparationConstants } from "./constants/OfferPreparationConstants.js";
 import {
   acquireProviderContent,
   applyEnrichedOffer,
@@ -17,6 +18,11 @@ import {
   OfferPreparationOrchestrator,
 } from "./services/OfferPreparationOrchestrator.js";
 import { claimInitialSearch, runLatestSearch } from "./services/searchOrchestration.js";
+import { generateApplicationBrief } from "./services/applicationBrief.js";
+import {
+  ApplicationBriefOrchestrator,
+  createApplicationBriefState,
+} from "./services/ApplicationBriefOrchestrator.js";
 
 const SERVER_URL = "http://localhost:3001";
 const OFFERS_ENDPOINT = "/api/offres";
@@ -146,8 +152,12 @@ function App() {
   const [status, setStatus] = useState(STATUS_LOADING);
   const [error, setError] = useState(null);
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const [candidateHasUnsavedChanges, setCandidateHasUnsavedChanges] = useState(false);
   const [preparationState, setPreparationState] = useState(() => {
     return createPreparationState();
+  });
+  const [applicationBriefState, setApplicationBriefState] = useState(() => {
+    return createApplicationBriefState();
   });
   const [profiles, setProfiles] = useState([]);
   const didRunInitialSearch = useRef(false);
@@ -157,6 +167,9 @@ function App() {
   const selectedOfferIdRef = useRef(null);
   const preparationStateRef = useRef(preparationState);
   const preparationOrchestratorRef = useRef(null);
+  const applicationBriefRequestIdRef = useRef(0);
+  const applicationBriefInFlightRef = useRef(false);
+  const applicationBriefOrchestratorRef = useRef(null);
 
   const updatePreparationState = useCallback((update) => {
     const current = preparationStateRef.current;
@@ -167,6 +180,10 @@ function App() {
 
   const applyPreparedOffer = useCallback((offer) => {
     applyEnrichedOffer(offer, setOffers, setSelectedOffer);
+  }, []);
+
+  const updateApplicationBriefState = useCallback((next) => {
+    setApplicationBriefState(next);
   }, []);
 
   if (!preparationOrchestratorRef.current) {
@@ -188,6 +205,18 @@ function App() {
       },
       requestIdRef: preparationRequestIdRef,
       inFlightRef: preparationInFlightRef,
+    });
+  }
+
+  if (!applicationBriefOrchestratorRef.current) {
+    applicationBriefOrchestratorRef.current = new ApplicationBriefOrchestrator({
+      generateApplicationBrief,
+      updateState: updateApplicationBriefState,
+      getSelectedOfferId() {
+        return selectedOfferIdRef.current;
+      },
+      requestIdRef: applicationBriefRequestIdRef,
+      inFlightRef: applicationBriefInFlightRef,
     });
   }
 
@@ -254,12 +283,14 @@ function App() {
 
   const handleSelectOffer = useCallback((offer) => {
     selectedOfferIdRef.current = offer.id;
+    applicationBriefOrchestratorRef.current.openOffer(offer.id);
     setSelectedOffer(offer);
     preparationOrchestratorRef.current.openOffer(offer.id);
   }, []);
 
   const handleCloseOffer = useCallback(() => {
     selectedOfferIdRef.current = null;
+    applicationBriefOrchestratorRef.current.invalidate();
     setSelectedOffer(null);
     preparationOrchestratorRef.current.closeOffer();
   }, []);
@@ -279,6 +310,30 @@ function App() {
   const handlePreparationRetry = useCallback(() => {
     return preparationOrchestratorRef.current.retry();
   }, []);
+
+  const handleAnalyzeApplication = useCallback(() => {
+    const offerReady = preparationStateRef.current.uiStatus
+      === OfferPreparationConstants.UI_STATUS.READY;
+    if (candidateHasUnsavedChanges || !offerReady) {
+      return;
+    }
+    return applicationBriefOrchestratorRef.current.analyze();
+  }, [candidateHasUnsavedChanges]);
+
+  const handleApplicationBriefRetry = useCallback(() => {
+    const offerReady = preparationStateRef.current.uiStatus
+      === OfferPreparationConstants.UI_STATUS.READY;
+    if (candidateHasUnsavedChanges || !offerReady) {
+      return;
+    }
+    return applicationBriefOrchestratorRef.current.retry();
+  }, [candidateHasUnsavedChanges]);
+
+  useEffect(() => {
+    if (candidateHasUnsavedChanges) {
+      applicationBriefOrchestratorRef.current.invalidate(selectedOfferIdRef.current);
+    }
+  }, [candidateHasUnsavedChanges]);
 
   const offerPlural = offers.length > 1 ? "s" : "";
 
@@ -453,7 +508,9 @@ function App() {
 
       {candidateViewOpened ? (
         <div hidden={activeView !== VIEW_CANDIDATE}>
-          <CandidateDossierView />
+          <CandidateDossierView
+            onUnsavedChangesChange={setCandidateHasUnsavedChanges}
+          />
         </div>
       ) : null}
 
@@ -466,6 +523,10 @@ function App() {
           onSubmitUserText={handleSubmitUserText}
           onUserTextDraftChange={handleUserTextDraftChange}
           onRetry={handlePreparationRetry}
+          applicationBriefState={applicationBriefState}
+          candidateHasUnsavedChanges={candidateHasUnsavedChanges}
+          onAnalyzeApplication={handleAnalyzeApplication}
+          onRetryApplication={handleApplicationBriefRetry}
         />
       ) : null}
     </div>
