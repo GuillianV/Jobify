@@ -117,6 +117,30 @@ test("API router delegates only GET and PUT singleton candidate dossier requests
   ]);
 });
 
+test("API router delegates only POST application brief requests", () => {
+  const calls = [];
+  const applicationBriefController = {
+    generateForOffer(request, response) {
+      calls.push({ request, response });
+    },
+  };
+  const router = new ApiRouter(
+    {},
+    {},
+    {},
+    applicationBriefController,
+  ).build();
+  const path = "/offres/:id/application-brief";
+  const postRoute = findRoute(router, path, "post");
+  const request = { params: { id: "42" } };
+  const response = {};
+
+  assert.notEqual(postRoute, null);
+  assert.equal(findRoute(router, path, "get"), null);
+  postRoute.route.stack[0].handle(request, response);
+  assert.deepEqual(calls, [{ request, response }]);
+});
+
 test("JSON parser limit remains explicitly bounded above the business text limit", () => {
   assert.equal(ApplicationConstants.JSON_BODY_LIMIT, EXPECTED_JSON_LIMIT);
   assert.equal(

@@ -302,6 +302,12 @@ test("valid cache hit returns the revalidated domain winner without Analyzer or 
   assert.ok(result.analysis instanceof OfferAnalysis);
   assert.equal(result.analysis.activities[0].value, "Winner");
   assert.equal(result.cacheHit, true);
+  assert.equal(result.identity, found.identity);
+  assert.equal(result.identity.cacheKey, found.identity.cacheKey);
+  assert.equal(result.identity.offerId, found.identity.offerId);
+  assert.equal(result.identity.schemaVersion, found.identity.schemaVersion);
+  assert.equal(result.identity.policyVersion, found.identity.policyVersion);
+  assert.equal(result.offerSnapshot, harness.projectedInput.offerSnapshot);
   assert.deepEqual(result.analyzer, {
     policyVersion: found.identity.policyVersion,
     schemaVersion: found.identity.schemaVersion,
@@ -322,6 +328,12 @@ test("cache miss analyzes once, timestamps, inserts and returns the revalidated 
   const result = await harness.service.analyze(REQUESTED_ID);
 
   assert.equal(result.cacheHit, false);
+  assert.equal(result.identity, harness.identity);
+  assert.equal(result.identity.cacheKey, harness.identity.cacheKey);
+  assert.equal(result.identity.offerId, harness.identity.offerId);
+  assert.equal(result.identity.schemaVersion, harness.identity.schemaVersion);
+  assert.equal(result.identity.policyVersion, harness.identity.policyVersion);
+  assert.equal(result.offerSnapshot, harness.projectedInput.offerSnapshot);
   assert.ok(result.analysis instanceof OfferAnalysis);
   assert.equal(result.analysis.activities[0].value, "Local");
   assert.equal(result.analyzedAt, LOCAL_ANALYZED_AT);
@@ -475,6 +487,8 @@ test("authoritative DB winner replaces every local post-analysis value", async (
   const result = await harness.service.analyze(REQUESTED_ID);
   assert.equal(result.cacheHit, false);
   assert.equal(result.analysis.activities[0].value, "Concurrent winner");
+  assert.equal(result.identity, winner.identity);
+  assert.equal(result.offerSnapshot, harness.projectedInput.offerSnapshot);
   assert.equal(result.analyzedAt, WINNER_ANALYZED_AT);
   assert.equal(
     result.analyzer.effectiveMaxOutputTokens,
@@ -548,6 +562,8 @@ test("same-key owner and waiter share one Analyzer generation and false cacheHit
   const [ownerResult, waiterResult] = await Promise.all([owner, waiter]);
 
   assert.equal(ownerResult, waiterResult);
+  assert.equal(ownerResult.identity, harness.identity);
+  assert.equal(ownerResult.offerSnapshot, harness.projectedInput.offerSnapshot);
   assert.equal(ownerResult.cacheHit, false);
   assert.equal(harness.calls.analyzer, 1);
   assert.equal(harness.calls.prepare, EXPECTED_REREAD_COUNT);
@@ -568,6 +584,8 @@ test("owner double-check hit is shared as a cache hit without generation", async
     harness.service.analyze(REQUESTED_ID),
   ]);
   assert.equal(owner, waiter);
+  assert.deepEqual(owner.identity, harness.identity);
+  assert.equal(owner.offerSnapshot, harness.projectedInput.offerSnapshot);
   assert.equal(owner.cacheHit, true);
   assert.equal(harness.calls.find, EXPECTED_OWNER_READ_COUNT);
   assert.equal(harness.calls.analyzer, 0);

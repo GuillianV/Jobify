@@ -73,7 +73,7 @@ class OfferAnalysisService {
     });
     const cached = this.#readInitialCache(identity, projectedInput.effectiveText);
     if (cached) {
-      return this.#buildResult(cached, true);
+      return this.#buildResult(cached, projectedInput.offerSnapshot, true);
     }
     const existing = this.inFlight.get(identity.cacheKey);
     if (existing) {
@@ -101,7 +101,7 @@ class OfferAnalysisService {
   async #resolveMiss(identity, projectedInput) {
     const cached = this.#readInitialCache(identity, projectedInput.effectiveText);
     if (cached) {
-      return this.#buildResult(cached, true);
+      return this.#buildResult(cached, projectedInput.offerSnapshot, true);
     }
     const freshResult = await this.offerAnalyzerService
       .analyzeProjectedInput(projectedInput);
@@ -117,7 +117,7 @@ class OfferAnalysisService {
       localRecord,
       projectedInput.effectiveText,
     );
-    return this.#buildResult(winner, false);
+    return this.#buildResult(winner, projectedInput.offerSnapshot, false);
   }
 
   /**
@@ -234,12 +234,15 @@ class OfferAnalysisService {
   /**
    * Build one runtime envelope exclusively from an authoritative persisted entry.
    * @param {object} entry - Validated FOUND entry.
+   * @param {object} offerSnapshot - Snapshot from the exact projected input.
    * @param {boolean} cacheHit - Whether analysis generation was avoided.
    * @returns {object} Runtime analysis envelope.
    */
-  #buildResult(entry, cacheHit) {
+  #buildResult(entry, offerSnapshot, cacheHit) {
     return {
       analysis: entry.analysis,
+      identity: entry.identity,
+      offerSnapshot,
       cacheHit,
       analyzer: {
         policyVersion: entry.identity.policyVersion,

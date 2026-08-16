@@ -64,8 +64,12 @@ function createRuntimeResult(cacheHit) {
       effectiveMaxOutputTokens: 2048,
     },
     analyzedAt: "2026-08-13T10:00:00.000Z",
-    contentFingerprint: "private-fingerprint",
-    cacheKey: "private-cache-key",
+    identity: {
+      cacheKey: "private-cache-key",
+      offerId: OFFER_ID,
+      contentFingerprint: "private-fingerprint",
+    },
+    offerSnapshot: { offerId: OFFER_ID, title: "Private title" },
   };
 }
 
@@ -390,6 +394,9 @@ test("analysis endpoint whitelists generated and cached success payloads", async
       "private-model",
       "private-fingerprint",
       "private-cache-key",
+      "Private title",
+      "offerSnapshot",
+      "identity",
       "configuredMaxOutputTokens",
       "effectiveMaxOutputTokens",
     ]) {

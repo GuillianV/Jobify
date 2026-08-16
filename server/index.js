@@ -4,6 +4,7 @@ import { JsonView } from "./src/views/JsonView.js";
 import { OfferController } from "./src/controllers/OfferController.js";
 import { ProfileController } from "./src/controllers/ProfileController.js";
 import { CandidateDossierController } from "./src/controllers/CandidateDossierController.js";
+import { ApplicationBriefController } from "./src/controllers/ApplicationBriefController.js";
 import { FranceTravailConnector } from "./src/connectors/FranceTravailConnector.js";
 import { AdzunaConnector } from "./src/connectors/AdzunaConnector.js";
 import { CareerjetConnector } from "./src/connectors/CareerjetConnector.js";
@@ -36,6 +37,18 @@ import { ProfileRepository } from "./src/persistence/ProfileRepository.js";
 import { CandidateDossierRepository } from "./src/persistence/CandidateDossierRepository.js";
 import { CandidateDossierService } from "./src/services/CandidateDossierService.js";
 import { CandidateDossierValidator } from "./src/services/CandidateDossierValidator.js";
+import { CandidateDossierFingerprint } from "./src/services/CandidateDossierFingerprint.js";
+import { ApplicationBriefPrompt } from "./src/services/ApplicationBriefPrompt.js";
+import { ApplicationBriefInputProjector } from "./src/services/ApplicationBriefInputProjector.js";
+import { ApplicationBriefSemanticOutputValidator } from "./src/services/ApplicationBriefSemanticOutputValidator.js";
+import { ApplicationBriefSemanticMatcher } from "./src/services/ApplicationBriefSemanticMatcher.js";
+import { ApplicationBriefEvidenceResolver } from "./src/services/ApplicationBriefEvidenceResolver.js";
+import { ApplicationBriefOfferRefResolver } from "./src/services/ApplicationBriefOfferRefResolver.js";
+import { ApplicationBriefAssembler } from "./src/services/ApplicationBriefAssembler.js";
+import { ApplicationBriefValidator } from "./src/services/ApplicationBriefValidator.js";
+import { ApplicationBriefContextValidator } from "./src/services/ApplicationBriefContextValidator.js";
+import { ApplicationBriefBuilder } from "./src/services/ApplicationBriefBuilder.js";
+import { ApplicationBriefService } from "./src/services/ApplicationBriefService.js";
 import { DatabaseConstants } from "./src/constants/DatabaseConstants.js";
 import { ApiRouter } from "./src/routes/ApiRouter.js";
 import { Application } from "./src/Application.js";
@@ -148,11 +161,48 @@ const candidateDossierController = new CandidateDossierController(
   candidateDossierService,
   view,
 );
+const applicationBriefPrompt = new ApplicationBriefPrompt();
+const applicationBriefSemanticValidator = new ApplicationBriefSemanticOutputValidator();
+const applicationBriefSemanticMatcher = new ApplicationBriefSemanticMatcher({
+  promptBuilder: applicationBriefPrompt,
+  groqClient: analyzerGroqClient,
+  semanticValidator: applicationBriefSemanticValidator,
+  config: ApplicationBriefSemanticMatcher.buildConfig(config.groq.model),
+});
+const applicationBriefEvidenceResolver = new ApplicationBriefEvidenceResolver();
+const applicationBriefOfferRefResolver = new ApplicationBriefOfferRefResolver();
+const applicationBriefAssembler = new ApplicationBriefAssembler({
+  evidenceResolver: applicationBriefEvidenceResolver,
+  candidateFingerprint: CandidateDossierFingerprint,
+});
+const applicationBriefValidator = new ApplicationBriefValidator();
+const applicationBriefContextValidator = new ApplicationBriefContextValidator({
+  applicationBriefValidator,
+  offerRefResolver: applicationBriefOfferRefResolver,
+  evidenceResolver: applicationBriefEvidenceResolver,
+  candidateFingerprint: CandidateDossierFingerprint,
+});
+const applicationBriefBuilder = new ApplicationBriefBuilder({
+  inputProjector: new ApplicationBriefInputProjector(),
+  semanticMatcher: applicationBriefSemanticMatcher,
+  assembler: applicationBriefAssembler,
+  contextValidator: applicationBriefContextValidator,
+});
+const applicationBriefService = new ApplicationBriefService({
+  offerAnalysisService,
+  candidateDossierService,
+  applicationBriefBuilder,
+});
+const applicationBriefController = new ApplicationBriefController(
+  applicationBriefService,
+  view,
+);
 
 const apiRouter = new ApiRouter(
   offerController,
   profileController,
   candidateDossierController,
+  applicationBriefController,
 );
 const application = new Application(config, apiRouter);
 
