@@ -220,6 +220,12 @@ function App() {
     });
   }
 
+  useEffect(() => {
+    return () => {
+      applicationBriefOrchestratorRef.current?.dispose();
+    };
+  }, []);
+
   const runSearch = useCallback(async (searchKeywords, searchCity, searchDistanceKm) => {
     await runLatestSearch({
       requestIdRef: searchRequestId,
@@ -336,6 +342,12 @@ function App() {
   }, [candidateHasUnsavedChanges]);
 
   const offerPlural = offers.length > 1 ? "s" : "";
+  const applicationBriefViewState = {
+    uiStatus: applicationBriefState.uiStatus,
+    offerId: applicationBriefState.offerId,
+    brief: applicationBriefState.result?.brief ?? null,
+    error: applicationBriefState.error,
+  };
 
   const handleViewChange = (view) => {
     setActiveView(view);
@@ -523,7 +535,7 @@ function App() {
           onSubmitUserText={handleSubmitUserText}
           onUserTextDraftChange={handleUserTextDraftChange}
           onRetry={handlePreparationRetry}
-          applicationBriefState={applicationBriefState}
+          applicationBriefState={applicationBriefViewState}
           candidateHasUnsavedChanges={candidateHasUnsavedChanges}
           onAnalyzeApplication={handleAnalyzeApplication}
           onRetryApplication={handleApplicationBriefRetry}

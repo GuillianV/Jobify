@@ -152,7 +152,7 @@ async function createApplicationBriefHttpError(response) {
  * @param {number} offerId - Persisted server offer identifier.
  * @param {Function} [request] - Injected fetch-compatible request.
  * @param {AbortSignal} [signal] - Optional cancellation signal.
- * @returns {Promise<object>} Detached minimally validated brief.
+ * @returns {Promise<object>} Atomic validated brief and opaque generation token.
  */
 async function generateApplicationBrief(offerId, request = fetch, signal = undefined) {
   if (!Number.isSafeInteger(offerId) || offerId <= 0) {
@@ -166,10 +166,16 @@ async function generateApplicationBrief(offerId, request = fetch, signal = undef
     throw await createApplicationBriefHttpError(response);
   }
   const payload = await response.json();
-  if (!isObject(payload) || !isObject(payload.brief)) {
+  if (!isObject(payload)
+    || !isObject(payload.brief)
+    || typeof payload.generationToken !== "string"
+    || payload.generationToken.length === 0) {
     throw new TypeError("Invalid application brief response");
   }
-  return validateApplicationBrief(payload.brief);
+  return {
+    brief: validateApplicationBrief(payload.brief),
+    generationToken: payload.generationToken,
+  };
 }
 
 export {

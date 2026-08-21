@@ -6,6 +6,7 @@ import {
 } from "../../src/services/applicationBrief.js";
 
 const OFFER_ID = 42;
+const GENERATION_TOKEN = "opaque-token";
 
 /**
  * Build one minimally renderable brief.
@@ -44,15 +45,21 @@ test("client posts to the exact offer endpoint without a business body", async (
   let captured = null;
   const result = await generateApplicationBrief(OFFER_ID, async (url, options) => {
     captured = { url, options };
-    return createResponse({ ok: true, status: 200, payload: { brief } });
+    return createResponse({
+      ok: true,
+      status: 200,
+      payload: { brief, generationToken: GENERATION_TOKEN },
+    });
   }, signal);
 
   assert.equal(captured.url, "http://localhost:3001/api/offres/42/application-brief");
   assert.equal(captured.options.method, "POST");
   assert.equal(Object.hasOwn(captured.options, "body"), false);
   assert.equal(captured.options.signal, signal);
-  assert.deepEqual(result, brief);
-  result.requirementMatches.push({ external: true });
+  assert.deepEqual(result, { brief, generationToken: GENERATION_TOKEN });
+  assert.notEqual(result.brief, brief);
+  assert.equal(result.generationToken, GENERATION_TOKEN);
+  result.brief.requirementMatches.push({ external: true });
   assert.deepEqual(brief.requirementMatches, []);
 });
 
@@ -98,11 +105,19 @@ test("client fails closed on malformed success envelopes and render structures",
   const invalidPayloads = [
     null,
     {},
-    { brief: [] },
-    { brief: { requirementMatches: [] } },
-    { brief: { ...createBrief(), requirementMatches: [{ state: "UNKNOWN" }] } },
-    { brief: { ...createBrief(), cautions: [{ kind: "UNKNOWN", evidenceRefs: [] }] } },
-    { brief: missingEvidenceReference },
+    { brief: createBrief() },
+    { brief: createBrief(), generationToken: "" },
+    { brief: [], generationToken: GENERATION_TOKEN },
+    { brief: { requirementMatches: [] }, generationToken: GENERATION_TOKEN },
+    {
+      brief: { ...createBrief(), requirementMatches: [{ state: "UNKNOWN" }] },
+      generationToken: GENERATION_TOKEN,
+    },
+    {
+      brief: { ...createBrief(), cautions: [{ kind: "UNKNOWN", evidenceRefs: [] }] },
+      generationToken: GENERATION_TOKEN,
+    },
+    { brief: missingEvidenceReference, generationToken: GENERATION_TOKEN },
   ];
   for (const payload of invalidPayloads) {
     await assert.rejects(generateApplicationBrief(OFFER_ID, async () => {
@@ -122,7 +137,11 @@ test("client rejects duplicate canonical evidence facts without choosing a value
       ],
     };
     await assert.rejects(generateApplicationBrief(OFFER_ID, async () => {
-      return createResponse({ ok: true, status: 200, payload: { brief } });
+      return createResponse({
+        ok: true,
+        status: 200,
+        payload: { brief, generationToken: GENERATION_TOKEN },
+      });
     }), TypeError);
   }
 });

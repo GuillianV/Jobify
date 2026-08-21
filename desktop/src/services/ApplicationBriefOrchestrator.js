@@ -9,7 +9,7 @@ function createApplicationBriefState(offerId = null) {
   return {
     uiStatus: ApplicationBriefConstants.UI_STATUS.IDLE,
     offerId,
-    brief: null,
+    result: null,
     error: null,
   };
 }
@@ -26,6 +26,7 @@ class ApplicationBriefOrchestrator {
    * @param {Function} dependencies.getSelectedOfferId - Current modal offer ID reader.
    * @param {object} [dependencies.requestIdRef] - Monotonic request identity.
    * @param {object} [dependencies.inFlightRef] - Synchronous duplicate guard.
+   * @param {object} [dependencies.abortControllerRef] - Current request controller.
    */
   constructor({
     generateApplicationBrief,
@@ -33,12 +34,14 @@ class ApplicationBriefOrchestrator {
     getSelectedOfferId,
     requestIdRef = { current: 0 },
     inFlightRef = { current: false },
+    abortControllerRef = { current: null },
   }) {
     this.generateApplicationBriefRequest = generateApplicationBrief;
     this.updateState = updateState;
     this.getSelectedOfferId = getSelectedOfferId;
     this.requestIdRef = requestIdRef;
     this.inFlightRef = inFlightRef;
+    this.abortControllerRef = abortControllerRef;
   }
 
   /**
@@ -56,9 +59,16 @@ class ApplicationBriefOrchestrator {
    * @returns {void}
    */
   invalidate(offerId = null) {
-    this.requestIdRef.current += 1;
-    this.inFlightRef.current = false;
+    this.invalidateOperation();
     this.updateState(createApplicationBriefState(offerId));
+  }
+
+  /**
+   * Stop pending work without updating React state during unmount.
+   * @returns {void}
+   */
+  dispose() {
+    this.invalidateOperation();
   }
 
   /**
@@ -74,25 +84,29 @@ class ApplicationBriefOrchestrator {
     this.updateState({
       uiStatus: ApplicationBriefConstants.UI_STATUS.LOADING,
       offerId,
-      brief: null,
+      result: null,
       error: null,
     });
     try {
-      const brief = await this.generateApplicationBriefRequest(offerId);
+      const result = await this.generateApplicationBriefRequest(
+        offerId,
+        fetch,
+        operation.controller.signal,
+      );
       if (this.isVisible(operation)) {
         this.updateState({
           uiStatus: ApplicationBriefConstants.UI_STATUS.SUCCESS,
           offerId,
-          brief,
+          result,
           error: null,
         });
       }
     } catch (error) {
-      if (this.isVisible(operation)) {
+      if (error?.name !== "AbortError" && this.isVisible(operation)) {
         this.updateState({
           uiStatus: ApplicationBriefConstants.UI_STATUS.ERROR,
           offerId,
-          brief: null,
+          result: null,
           error: {
             status: Number.isInteger(error?.status) ? error.status : null,
             code: typeof error?.code === "string" ? error.code : null,
@@ -123,7 +137,9 @@ class ApplicationBriefOrchestrator {
     }
     this.requestIdRef.current += 1;
     this.inFlightRef.current = true;
-    return { requestId: this.requestIdRef.current, offerId };
+    const controller = new AbortController();
+    this.abortControllerRef.current = controller;
+    return { requestId: this.requestIdRef.current, offerId, controller };
   }
 
   /**
@@ -133,7 +149,8 @@ class ApplicationBriefOrchestrator {
    */
   isVisible(operation) {
     return operation.requestId === this.requestIdRef.current
-      && operation.offerId === this.getSelectedOfferId();
+      && operation.offerId === this.getSelectedOfferId()
+      && !operation.controller.signal.aborted;
   }
 
   /**
@@ -142,9 +159,23 @@ class ApplicationBriefOrchestrator {
    * @returns {void}
    */
   finishOperation(operation) {
-    if (operation.requestId === this.requestIdRef.current) {
+    if (operation.requestId === this.requestIdRef.current
+      && operation.controller === this.abortControllerRef.current) {
       this.inFlightRef.current = false;
+      this.abortControllerRef.current = null;
     }
+  }
+
+  /**
+   * Abort and invalidate the current operation while preserving newer ownership.
+   * @returns {void}
+   */
+  invalidateOperation() {
+    this.requestIdRef.current += 1;
+    const controller = this.abortControllerRef.current;
+    this.abortControllerRef.current = null;
+    this.inFlightRef.current = false;
+    controller?.abort();
   }
 }
 
