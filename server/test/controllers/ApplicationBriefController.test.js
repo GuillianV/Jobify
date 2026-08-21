@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { HttpStatus } from "../../src/constants/HttpStatus.js";
 import { OfferPreparationConstants } from "../../src/constants/OfferPreparationConstants.js";
 import { ApplicationBriefController } from "../../src/controllers/ApplicationBriefController.js";
+import { OfferIdParser } from "../../src/controllers/OfferIdParser.js";
 import { ApplicationBriefContextValidationError } from "../../src/services/ApplicationBriefContextValidationError.js";
 import { ApplicationBriefMatcherError } from "../../src/services/ApplicationBriefMatcherError.js";
 import { CandidateDossierServiceError } from "../../src/services/CandidateDossierServiceError.js";
@@ -40,7 +41,10 @@ function createHarness(behavior = {}) {
       state.error = { statusCode, message, metadata };
     },
   };
-  return { controller: new ApplicationBriefController(service, view), state };
+  return {
+    controller: new ApplicationBriefController(service, view, new OfferIdParser()),
+    state,
+  };
 }
 
 test("controller returns only the public brief and ignores request body inputs", async () => {

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OfferController } from "../../src/controllers/OfferController.js";
+import { OfferIdParser } from "../../src/controllers/OfferIdParser.js";
 import { HttpStatus } from "../../src/constants/HttpStatus.js";
 import { OfferPreparationConstants } from "../../src/constants/OfferPreparationConstants.js";
 import { OfferAnalysisServiceError } from "../../src/services/OfferAnalysisServiceError.js";
@@ -270,8 +271,8 @@ test("user-content endpoint forwards only text and ignores spoofed metadata", ()
   assert.equal(rendered.offre.source, "hellowork");
 });
 
-test("HTTP offer id parser accepts only canonical positive safe decimals", () => {
-  const controller = new OfferController();
+test("shared HTTP offer id parser preserves the OfferController canonical contract", () => {
+  const parser = new OfferIdParser();
   const acceptedIds = ["1", "12", "123456", MAXIMUM_SAFE_ID];
   const rejectedIds = [
     "0",
@@ -287,11 +288,11 @@ test("HTTP offer id parser accepts only canonical positive safe decimals", () =>
   ];
 
   for (const rawId of acceptedIds) {
-    assert.equal(controller.parseOfferId(rawId), Number(rawId));
+    assert.equal(parser.parse(rawId), Number(rawId));
   }
   for (const rawId of rejectedIds) {
     assert.throws(() => {
-      return controller.parseOfferId(rawId);
+      return parser.parse(rawId);
     }, (error) => {
       return error.statusCode === HttpStatus.BAD_REQUEST;
     });

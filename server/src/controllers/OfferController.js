@@ -5,8 +5,8 @@ import { OfferPreparationConstants } from "../constants/OfferPreparationConstant
 import { OfferAnalysisServiceError } from "../services/OfferAnalysisServiceError.js";
 import { OfferAnalyzerError } from "../services/OfferAnalyzerError.js";
 import { OfferPreparationError } from "../services/OfferPreparationError.js";
+import { OfferIdParser } from "./OfferIdParser.js";
 
-const CANONICAL_OFFER_ID_PATTERN = /^[1-9]\d*$/u;
 const PUBLIC_ANALYSIS_ERROR = Object.freeze({
   INVALID_OFFER_ID: "Invalid offer id",
   OFFER_NOT_FOUND: "Offer not found",
@@ -33,6 +33,7 @@ class OfferController {
    * @param {import("../services/OfferContentAcquisitionService.js").OfferContentAcquisitionService} offerContentAcquisitionService - DETAIL acquisition service.
    * @param {import("../services/OfferPreparationService.js").OfferPreparationService} offerPreparationService - Preparation flow.
    * @param {import("../services/OfferAnalysisService.js").OfferAnalysisService} offerAnalysisService - Cached analysis runtime.
+   * @param {OfferIdParser} offerIdParser - Shared canonical offer identifier parser.
    */
   constructor(
     offerSearchService,
@@ -41,6 +42,7 @@ class OfferController {
     offerContentAcquisitionService,
     offerPreparationService,
     offerAnalysisService,
+    offerIdParser = new OfferIdParser(),
   ) {
     this.offerSearchService = offerSearchService;
     this.communeResolver = communeResolver;
@@ -48,6 +50,7 @@ class OfferController {
     this.offerContentAcquisitionService = offerContentAcquisitionService;
     this.offerPreparationService = offerPreparationService;
     this.offerAnalysisService = offerAnalysisService;
+    this.offerIdParser = offerIdParser;
   }
 
   /**
@@ -90,22 +93,6 @@ class OfferController {
   }
 
   /**
-   * Parse one canonical positive decimal SQLite identifier from an HTTP path.
-   * @param {unknown} rawId - Raw route parameter.
-   * @returns {number} Safe positive identifier.
-   */
-  parseOfferId(rawId) {
-    if (typeof rawId !== "string" || !CANONICAL_OFFER_ID_PATTERN.test(rawId)) {
-      throw new OfferPreparationError("Invalid offer id", HttpStatus.BAD_REQUEST);
-    }
-    const id = Number(rawId);
-    if (!Number.isSafeInteger(id) || id <= 0) {
-      throw new OfferPreparationError("Invalid offer id", HttpStatus.BAD_REQUEST);
-    }
-    return id;
-  }
-
-  /**
    * Handle a request to search offers across every configured source, merging
    * any client-scraped offers, then persist the result.
    * @param {import("express").Request} request - The incoming request.
@@ -136,7 +123,7 @@ class OfferController {
    */
   enrichOfferContent(request, response) {
     try {
-      const id = this.parseOfferId(request.params.id);
+      const id = this.offerIdParser.parse(request.params.id);
       this.offerContentAcquisitionService.enrichHelloWorkDetail(id, request.body);
       const preparation = this.offerPreparationService.prepare(id);
       this.view.renderSuccess(response, this.toPreparationApiJson(preparation));
@@ -154,7 +141,7 @@ class OfferController {
    */
   prepareOffer(request, response) {
     try {
-      const id = this.parseOfferId(request.params.id);
+      const id = this.offerIdParser.parse(request.params.id);
       const preparation = this.offerPreparationService.prepare(id);
       this.view.renderSuccess(response, this.toPreparationApiJson(preparation));
     } catch (error) {
@@ -171,7 +158,7 @@ class OfferController {
    */
   replaceUserContent(request, response) {
     try {
-      const id = this.parseOfferId(request.params.id);
+      const id = this.offerIdParser.parse(request.params.id);
       const preparation = this.offerPreparationService.replaceUserText(
         id,
         request.body?.text,
@@ -191,7 +178,7 @@ class OfferController {
    */
   async analyseOffer(request, response) {
     try {
-      const id = this.parseOfferId(request.params.id);
+      const id = this.offerIdParser.parse(request.params.id);
       const result = await this.offerAnalysisService.analyze(id);
       this.view.renderSuccess(response, this.toAnalysisApiJson(result));
     } catch (error) {

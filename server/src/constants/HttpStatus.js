@@ -14,6 +14,8 @@ class HttpStatus {
 
   static CONFLICT = 409;
 
+  static CONTENT_TOO_LARGE = 413;
+
   static UNPROCESSABLE_ENTITY = 422;
 
   static INTERNAL_SERVER_ERROR = 500;

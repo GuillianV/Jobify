@@ -141,6 +141,48 @@ test("API router delegates only POST application brief requests", () => {
   assert.deepEqual(calls, [{ request, response }]);
 });
 
+test("API router delegates only POST cover letter requests without changing brief routing", () => {
+  const calls = [];
+  const applicationBriefController = {
+    generateForOffer(request, response) {
+      calls.push({ resource: "brief", request, response });
+    },
+  };
+  const coverLetterController = {
+    generateForOffer(request, response) {
+      calls.push({ resource: "cover-letter", request, response });
+    },
+  };
+  const router = new ApiRouter(
+    {},
+    {},
+    {},
+    applicationBriefController,
+    coverLetterController,
+  ).build();
+  const coverLetterPath = "/offres/:id/cover-letter";
+  const applicationBriefPath = "/offres/:id/application-brief";
+  const coverLetterRoute = findRoute(router, coverLetterPath, "post");
+  const applicationBriefRoute = findRoute(router, applicationBriefPath, "post");
+  const request = { params: { id: "42" }, body: {} };
+  const response = {};
+
+  assert.notEqual(coverLetterRoute, null);
+  assert.notEqual(applicationBriefRoute, null);
+  for (const method of ["get", "put", "patch", "delete"]) {
+    assert.equal(findRoute(router, coverLetterPath, method), null);
+  }
+  assert.equal(router.stack.filter((layer) => {
+    return layer.route?.path === coverLetterPath;
+  }).length, 1);
+  coverLetterRoute.route.stack[0].handle(request, response);
+  applicationBriefRoute.route.stack[0].handle(request, response);
+  assert.deepEqual(calls, [
+    { resource: "cover-letter", request, response },
+    { resource: "brief", request, response },
+  ]);
+});
+
 test("JSON parser limit remains explicitly bounded above the business text limit", () => {
   assert.equal(ApplicationConstants.JSON_BODY_LIMIT, EXPECTED_JSON_LIMIT);
   assert.equal(

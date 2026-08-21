@@ -5,6 +5,8 @@ import { OfferController } from "./src/controllers/OfferController.js";
 import { ProfileController } from "./src/controllers/ProfileController.js";
 import { CandidateDossierController } from "./src/controllers/CandidateDossierController.js";
 import { ApplicationBriefController } from "./src/controllers/ApplicationBriefController.js";
+import { CoverLetterController } from "./src/controllers/CoverLetterController.js";
+import { OfferIdParser } from "./src/controllers/OfferIdParser.js";
 import { FranceTravailConnector } from "./src/connectors/FranceTravailConnector.js";
 import { AdzunaConnector } from "./src/connectors/AdzunaConnector.js";
 import { CareerjetConnector } from "./src/connectors/CareerjetConnector.js";
@@ -50,6 +52,11 @@ import { ApplicationBriefContextValidator } from "./src/services/ApplicationBrie
 import { ApplicationBriefBuilder } from "./src/services/ApplicationBriefBuilder.js";
 import { ApplicationBriefIntegritySigner } from "./src/services/ApplicationBriefIntegritySigner.js";
 import { ApplicationBriefService } from "./src/services/ApplicationBriefService.js";
+import { CoverLetterInputProjector } from "./src/services/CoverLetterInputProjector.js";
+import { CoverLetterPrompt } from "./src/services/CoverLetterPrompt.js";
+import { CoverLetterOutputValidator } from "./src/services/CoverLetterOutputValidator.js";
+import { CoverLetterGenerator } from "./src/services/CoverLetterGenerator.js";
+import { CoverLetterService } from "./src/services/CoverLetterService.js";
 import { DatabaseConstants } from "./src/constants/DatabaseConstants.js";
 import { ApiRouter } from "./src/routes/ApiRouter.js";
 import { Application } from "./src/Application.js";
@@ -196,9 +203,35 @@ const applicationBriefService = new ApplicationBriefService({
   applicationBriefBuilder,
   applicationBriefIntegritySigner,
 });
+const offerIdParser = new OfferIdParser();
 const applicationBriefController = new ApplicationBriefController(
   applicationBriefService,
   view,
+  offerIdParser,
+);
+const coverLetterInputProjector = new CoverLetterInputProjector({
+  offerRefResolver: applicationBriefOfferRefResolver,
+});
+const coverLetterPrompt = new CoverLetterPrompt();
+const coverLetterOutputValidator = new CoverLetterOutputValidator();
+const coverLetterGenerator = new CoverLetterGenerator({
+  promptBuilder: coverLetterPrompt,
+  groqClient: analyzerGroqClient,
+  outputValidator: coverLetterOutputValidator,
+  config: CoverLetterGenerator.buildConfig(config.groq.model),
+});
+const coverLetterService = new CoverLetterService({
+  applicationBriefIntegritySigner,
+  offerAnalysisService,
+  candidateDossierService,
+  applicationBriefContextValidator,
+  coverLetterInputProjector,
+  coverLetterGenerator,
+});
+const coverLetterController = new CoverLetterController(
+  coverLetterService,
+  view,
+  offerIdParser,
 );
 
 const apiRouter = new ApiRouter(
@@ -206,6 +239,7 @@ const apiRouter = new ApiRouter(
   profileController,
   candidateDossierController,
   applicationBriefController,
+  coverLetterController,
 );
 const application = new Application(config, apiRouter);
 

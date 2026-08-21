@@ -9,6 +9,7 @@ const PROFILES_ROUTE = "/profils";
 const PROFILE_BY_ID_ROUTE = "/profils/:id";
 const CANDIDATE_DOSSIER_ROUTE = "/dossier-candidat";
 const APPLICATION_BRIEF_ROUTE = "/offres/:id/application-brief";
+const COVER_LETTER_ROUTE = "/offres/:id/cover-letter";
 
 /**
  * Builds the Express router exposing the public API routes.
@@ -20,17 +21,20 @@ class ApiRouter {
    * @param {import("../controllers/ProfileController.js").ProfileController} profileController - The profile controller.
    * @param {import("../controllers/CandidateDossierController.js").CandidateDossierController} candidateDossierController - Singleton dossier controller.
    * @param {import("../controllers/ApplicationBriefController.js").ApplicationBriefController} applicationBriefController - On-demand brief controller.
+   * @param {import("../controllers/CoverLetterController.js").CoverLetterController} coverLetterController - On-demand cover letter controller.
    */
   constructor(
     offerController,
     profileController,
     candidateDossierController,
     applicationBriefController,
+    coverLetterController,
   ) {
     this.offerController = offerController;
     this.profileController = profileController;
     this.candidateDossierController = candidateDossierController;
     this.applicationBriefController = applicationBriefController;
+    this.coverLetterController = coverLetterController;
   }
 
   /**
@@ -73,6 +77,9 @@ class ApiRouter {
     });
     router.post(APPLICATION_BRIEF_ROUTE, (request, response) => {
       this.applicationBriefController.generateForOffer(request, response);
+    });
+    router.post(COVER_LETTER_ROUTE, (request, response) => {
+      this.coverLetterController.generateForOffer(request, response);
     });
     return router;
   }
