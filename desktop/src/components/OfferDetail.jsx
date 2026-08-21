@@ -4,6 +4,7 @@ import { formatSalary, formatDateTime, openExternal } from "./format.js";
 import { OfferPreparationConstants } from "../constants/OfferPreparationConstants.js";
 import { isValidUserTextDraft } from "../services/OfferPreparationOrchestrator.js";
 import { ApplicationBriefPanel } from "./ApplicationBriefPanel.jsx";
+import { CoverLetterPanel } from "./CoverLetterPanel.jsx";
 
 const UNKNOWN_COMPANY = "Entreprise non précisée";
 const NO_DESCRIPTION = "Pas de description fournie par la source.";
@@ -58,6 +59,7 @@ function getRetryLabel(retryKind) {
  * @param {boolean} props.candidateHasUnsavedChanges - Whether saved candidate data is stale.
  * @param {Function} props.onAnalyzeApplication - Starts explicit brief generation.
  * @param {Function} props.onRetryApplication - Retries explicit brief generation.
+ * @param {object} props.coverLetter - Controlled CoverLetter presentation properties.
  * @returns {JSX.Element} The rendered modal.
  */
 function OfferDetail({
@@ -72,6 +74,7 @@ function OfferDetail({
   candidateHasUnsavedChanges,
   onAnalyzeApplication,
   onRetryApplication,
+  coverLetter,
 }) {
   useEffect(() => {
     const handleKey = (event) => {
@@ -255,6 +258,8 @@ function OfferDetail({
           onAnalyze={onAnalyzeApplication}
           onRetry={onRetryApplication}
         />
+
+        <CoverLetterPanel {...coverLetter} />
 
         <div className="mt-6 flex justify-end">
           <button

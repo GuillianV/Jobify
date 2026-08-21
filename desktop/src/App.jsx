@@ -23,6 +23,13 @@ import {
   ApplicationBriefOrchestrator,
   createApplicationBriefState,
 } from "./services/ApplicationBriefOrchestrator.js";
+import { generateCoverLetter } from "./services/coverLetter.js";
+import {
+  CoverLetterOrchestrator,
+  createCoverLetterState,
+} from "./services/CoverLetterOrchestrator.js";
+import { CoverLetterConstants } from "./constants/CoverLetterConstants.js";
+import { getCoverLetterErrorMessage } from "./services/coverLetterPresentation.js";
 
 const SERVER_URL = "http://localhost:3001";
 const OFFERS_ENDPOINT = "/api/offres";
@@ -34,6 +41,21 @@ const DEFAULT_KEYWORDS = "node.js";
 const DEFAULT_CITY = "Annecy";
 const VIEW_OFFERS = "offers";
 const VIEW_CANDIDATE = "candidate";
+const COPY_STATUS_IDLE = "idle";
+const COPY_STATUS_COPIED = "copied";
+const COPY_STATUS_ERROR = "error";
+const DRAFT_LOSS_MESSAGE = "Vous avez modifié la lettre. Ces modifications seront perdues. Continuer ?";
+const DRAFT_REPLACEMENT_MESSAGE = "Vos modifications seront remplacées par une nouvelle lettre. Continuer ?";
+
+/**
+ * Tell whether the current draft differs from its last generated baseline.
+ * @param {string} draft - Current editable text.
+ * @param {string|null} baseline - Last generated text.
+ * @returns {boolean} Whether user edits would be lost.
+ */
+function isCoverLetterDraftDirty(draft, baseline) {
+  return baseline !== null && draft !== baseline;
+}
 
 /**
  * Scrape HelloWork client-side through the Electron bridge. Best-effort: any
@@ -159,6 +181,11 @@ function App() {
   const [applicationBriefState, setApplicationBriefState] = useState(() => {
     return createApplicationBriefState();
   });
+  const [coverLetterState, setCoverLetterState] = useState(() => {
+    return createCoverLetterState();
+  });
+  const [draftLetter, setDraftLetter] = useState("");
+  const [copyStatus, setCopyStatus] = useState(COPY_STATUS_IDLE);
   const [profiles, setProfiles] = useState([]);
   const didRunInitialSearch = useRef(false);
   const searchRequestId = useRef(0);
@@ -170,6 +197,14 @@ function App() {
   const applicationBriefRequestIdRef = useRef(0);
   const applicationBriefInFlightRef = useRef(false);
   const applicationBriefOrchestratorRef = useRef(null);
+  const applicationBriefResultRef = useRef(null);
+  const coverLetterStateRef = useRef(coverLetterState);
+  const coverLetterRequestIdRef = useRef(0);
+  const coverLetterInFlightRef = useRef(false);
+  const coverLetterOrchestratorRef = useRef(null);
+  const draftLetterRef = useRef("");
+  const generatedLetterBaselineRef = useRef(null);
+  const copyRequestIdRef = useRef(0);
 
   const updatePreparationState = useCallback((update) => {
     const current = preparationStateRef.current;
@@ -183,7 +218,29 @@ function App() {
   }, []);
 
   const updateApplicationBriefState = useCallback((next) => {
+    applicationBriefResultRef.current = next.result;
     setApplicationBriefState(next);
+  }, []);
+
+  const updateCoverLetterState = useCallback((next) => {
+    coverLetterStateRef.current = next;
+    setCoverLetterState(next);
+    if (next.uiStatus === CoverLetterConstants.UI_STATUS.SUCCESS && next.coverLetter) {
+      const letter = next.coverLetter.letter;
+      draftLetterRef.current = letter;
+      generatedLetterBaselineRef.current = letter;
+      setDraftLetter(letter);
+      copyRequestIdRef.current += 1;
+      setCopyStatus(COPY_STATUS_IDLE);
+    }
+  }, []);
+
+  const clearCoverLetterDraft = useCallback(() => {
+    draftLetterRef.current = "";
+    generatedLetterBaselineRef.current = null;
+    setDraftLetter("");
+    copyRequestIdRef.current += 1;
+    setCopyStatus(COPY_STATUS_IDLE);
   }, []);
 
   if (!preparationOrchestratorRef.current) {
@@ -220,9 +277,28 @@ function App() {
     });
   }
 
+  if (!coverLetterOrchestratorRef.current) {
+    coverLetterOrchestratorRef.current = new CoverLetterOrchestrator({
+      generateCoverLetter,
+      updateState: updateCoverLetterState,
+      getSelectedOfferId() {
+        return selectedOfferIdRef.current;
+      },
+      getApplicationBriefResult() {
+        return applicationBriefResultRef.current;
+      },
+      onRefreshRequired() {
+        applicationBriefOrchestratorRef.current.invalidate(selectedOfferIdRef.current);
+      },
+      requestIdRef: coverLetterRequestIdRef,
+      inFlightRef: coverLetterInFlightRef,
+    });
+  }
+
   useEffect(() => {
     return () => {
       applicationBriefOrchestratorRef.current?.dispose();
+      coverLetterOrchestratorRef.current?.dispose();
     };
   }, []);
 
@@ -288,18 +364,34 @@ function App() {
   };
 
   const handleSelectOffer = useCallback((offer) => {
+    if (isCoverLetterDraftDirty(
+      draftLetterRef.current,
+      generatedLetterBaselineRef.current,
+    ) && !globalThis.confirm(DRAFT_LOSS_MESSAGE)) {
+      return;
+    }
     selectedOfferIdRef.current = offer.id;
     applicationBriefOrchestratorRef.current.openOffer(offer.id);
+    coverLetterOrchestratorRef.current.invalidate(offer.id, null);
+    clearCoverLetterDraft();
     setSelectedOffer(offer);
     preparationOrchestratorRef.current.openOffer(offer.id);
-  }, []);
+  }, [clearCoverLetterDraft]);
 
   const handleCloseOffer = useCallback(() => {
+    if (isCoverLetterDraftDirty(
+      draftLetterRef.current,
+      generatedLetterBaselineRef.current,
+    ) && !globalThis.confirm(DRAFT_LOSS_MESSAGE)) {
+      return;
+    }
     selectedOfferIdRef.current = null;
     applicationBriefOrchestratorRef.current.invalidate();
+    coverLetterOrchestratorRef.current.invalidate();
+    clearCoverLetterDraft();
     setSelectedOffer(null);
     preparationOrchestratorRef.current.closeOffer();
-  }, []);
+  }, [clearCoverLetterDraft]);
 
   const handlePrepareOffer = useCallback(() => {
     return preparationOrchestratorRef.current.prepare();
@@ -323,8 +415,16 @@ function App() {
     if (candidateHasUnsavedChanges || !offerReady) {
       return;
     }
+    if (isCoverLetterDraftDirty(
+      draftLetterRef.current,
+      generatedLetterBaselineRef.current,
+    ) && !globalThis.confirm(DRAFT_LOSS_MESSAGE)) {
+      return;
+    }
+    coverLetterOrchestratorRef.current.invalidate(selectedOfferIdRef.current, null);
+    clearCoverLetterDraft();
     return applicationBriefOrchestratorRef.current.analyze();
-  }, [candidateHasUnsavedChanges]);
+  }, [candidateHasUnsavedChanges, clearCoverLetterDraft]);
 
   const handleApplicationBriefRetry = useCallback(() => {
     const offerReady = preparationStateRef.current.uiStatus
@@ -332,14 +432,73 @@ function App() {
     if (candidateHasUnsavedChanges || !offerReady) {
       return;
     }
+    if (isCoverLetterDraftDirty(
+      draftLetterRef.current,
+      generatedLetterBaselineRef.current,
+    ) && !globalThis.confirm(DRAFT_LOSS_MESSAGE)) {
+      return;
+    }
+    coverLetterOrchestratorRef.current.invalidate(selectedOfferIdRef.current, null);
+    clearCoverLetterDraft();
     return applicationBriefOrchestratorRef.current.retry();
+  }, [candidateHasUnsavedChanges, clearCoverLetterDraft]);
+
+  const handleGenerateCoverLetter = useCallback(() => {
+    const result = applicationBriefResultRef.current;
+    if (candidateHasUnsavedChanges
+      || result === null
+      || coverLetterStateRef.current.uiStatus === CoverLetterConstants.UI_STATUS.LOADING) {
+      return;
+    }
+    return coverLetterOrchestratorRef.current.generate();
   }, [candidateHasUnsavedChanges]);
+
+  const handleRegenerateCoverLetter = useCallback(() => {
+    if (isCoverLetterDraftDirty(
+      draftLetterRef.current,
+      generatedLetterBaselineRef.current,
+    ) && !globalThis.confirm(DRAFT_REPLACEMENT_MESSAGE)) {
+      return;
+    }
+    return handleGenerateCoverLetter();
+  }, [handleGenerateCoverLetter]);
+
+  const handleCoverLetterDraftChange = useCallback((text) => {
+    draftLetterRef.current = text;
+    setDraftLetter(text);
+    copyRequestIdRef.current += 1;
+    setCopyStatus(COPY_STATUS_IDLE);
+  }, []);
+
+  const handleCopyCoverLetter = useCallback(async () => {
+    const text = draftLetterRef.current;
+    if (text.length === 0) {
+      return;
+    }
+    copyRequestIdRef.current += 1;
+    const requestId = copyRequestIdRef.current;
+    try {
+      if (!globalThis.navigator?.clipboard?.writeText) {
+        throw new Error("Clipboard unavailable");
+      }
+      await globalThis.navigator.clipboard.writeText(text);
+      if (requestId === copyRequestIdRef.current && text === draftLetterRef.current) {
+        setCopyStatus(COPY_STATUS_COPIED);
+      }
+    } catch {
+      if (requestId === copyRequestIdRef.current && text === draftLetterRef.current) {
+        setCopyStatus(COPY_STATUS_ERROR);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (candidateHasUnsavedChanges) {
       applicationBriefOrchestratorRef.current.invalidate(selectedOfferIdRef.current);
+      coverLetterOrchestratorRef.current.invalidate(selectedOfferIdRef.current, null);
+      clearCoverLetterDraft();
     }
-  }, [candidateHasUnsavedChanges]);
+  }, [candidateHasUnsavedChanges, clearCoverLetterDraft]);
 
   const offerPlural = offers.length > 1 ? "s" : "";
   const applicationBriefViewState = {
@@ -347,6 +506,26 @@ function App() {
     offerId: applicationBriefState.offerId,
     brief: applicationBriefState.result?.brief ?? null,
     error: applicationBriefState.error,
+  };
+  const canGenerateCoverLetter = applicationBriefState.result !== null
+    && applicationBriefState.offerId === selectedOffer?.id
+    && !candidateHasUnsavedChanges
+    && applicationBriefState.uiStatus !== "loading"
+    && coverLetterState.uiStatus !== CoverLetterConstants.UI_STATUS.LOADING;
+  const coverLetterPanel = {
+    visible: applicationBriefState.result !== null
+      || coverLetterState.uiStatus !== CoverLetterConstants.UI_STATUS.IDLE
+      || draftLetter.length > 0,
+    uiStatus: coverLetterState.uiStatus,
+    errorMessage: coverLetterState.error
+      ? getCoverLetterErrorMessage(coverLetterState.error) : null,
+    draftLetter,
+    canGenerate: canGenerateCoverLetter,
+    copyStatus,
+    onGenerate: handleGenerateCoverLetter,
+    onRegenerate: handleRegenerateCoverLetter,
+    onDraftChange: handleCoverLetterDraftChange,
+    onCopy: handleCopyCoverLetter,
   };
 
   const handleViewChange = (view) => {
@@ -539,6 +718,7 @@ function App() {
           candidateHasUnsavedChanges={candidateHasUnsavedChanges}
           onAnalyzeApplication={handleAnalyzeApplication}
           onRetryApplication={handleApplicationBriefRetry}
+          coverLetter={coverLetterPanel}
         />
       ) : null}
     </div>
