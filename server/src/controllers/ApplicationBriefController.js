@@ -46,8 +46,11 @@ class ApplicationBriefController {
   async generateForOffer(request, response) {
     try {
       const offerId = this.parseOfferId(request.params.id);
-      const brief = await this.applicationBriefService.generateForOffer(offerId);
-      this.view.renderSuccess(response, { brief: brief.toJson() });
+      const result = await this.applicationBriefService.generateForOffer(offerId);
+      this.view.renderSuccess(response, {
+        brief: result.brief,
+        generationToken: result.generationToken,
+      });
     } catch (error) {
       const mapped = this.mapError(error);
       this.view.renderError(response, mapped.statusCode, mapped.message, mapped.metadata);

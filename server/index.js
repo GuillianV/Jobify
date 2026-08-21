@@ -48,6 +48,7 @@ import { ApplicationBriefAssembler } from "./src/services/ApplicationBriefAssemb
 import { ApplicationBriefValidator } from "./src/services/ApplicationBriefValidator.js";
 import { ApplicationBriefContextValidator } from "./src/services/ApplicationBriefContextValidator.js";
 import { ApplicationBriefBuilder } from "./src/services/ApplicationBriefBuilder.js";
+import { ApplicationBriefIntegritySigner } from "./src/services/ApplicationBriefIntegritySigner.js";
 import { ApplicationBriefService } from "./src/services/ApplicationBriefService.js";
 import { DatabaseConstants } from "./src/constants/DatabaseConstants.js";
 import { ApiRouter } from "./src/routes/ApiRouter.js";
@@ -188,10 +189,12 @@ const applicationBriefBuilder = new ApplicationBriefBuilder({
   assembler: applicationBriefAssembler,
   contextValidator: applicationBriefContextValidator,
 });
+const applicationBriefIntegritySigner = ApplicationBriefIntegritySigner.createEphemeral();
 const applicationBriefService = new ApplicationBriefService({
   offerAnalysisService,
   candidateDossierService,
   applicationBriefBuilder,
+  applicationBriefIntegritySigner,
 });
 const applicationBriefController = new ApplicationBriefController(
   applicationBriefService,

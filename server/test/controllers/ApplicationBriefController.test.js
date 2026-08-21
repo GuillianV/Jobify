@@ -19,10 +19,9 @@ const OFFER_ID = 42;
  */
 function createHarness(behavior = {}) {
   const state = { ids: [], success: null, error: null };
-  const brief = {
-    toJson() {
-      return { schemaVersion: "application-brief-schema-v1", inputIdentity: {} };
-    },
+  const result = {
+    brief: { schemaVersion: "application-brief-schema-v1", inputIdentity: {} },
+    generationToken: "v1.opaque-token",
   };
   const service = {
     async generateForOffer(offerId) {
@@ -30,7 +29,7 @@ function createHarness(behavior = {}) {
       if (behavior.error) {
         throw behavior.error;
       }
-      return brief;
+      return result;
     },
   };
   const view = {
@@ -58,6 +57,7 @@ test("controller returns only the public brief and ignores request body inputs",
   assert.deepEqual(harness.state.ids, [OFFER_ID]);
   assert.deepEqual(harness.state.success, {
     brief: { schemaVersion: "application-brief-schema-v1", inputIdentity: {} },
+    generationToken: "v1.opaque-token",
   });
 });
 
