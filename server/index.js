@@ -17,6 +17,7 @@ import { OfferPreparationService } from "./src/services/OfferPreparationService.
 import { OfferAnalysisInputProjector } from "./src/services/OfferAnalysisInputProjector.js";
 import { OfferAnalysisNormalizer } from "./src/services/OfferAnalysisNormalizer.js";
 import { OfferAnalysisValidator } from "./src/services/OfferAnalysisValidator.js";
+import { OfferAnalysisEvidenceReconciler } from "./src/services/OfferAnalysisEvidenceReconciler.js";
 import { OfferAnalyzerPrompt } from "./src/services/OfferAnalyzerPrompt.js";
 import { GroqJsonClient } from "./src/services/GroqJsonClient.js";
 import { OfferAnalyzerService } from "./src/services/OfferAnalyzerService.js";
@@ -122,6 +123,7 @@ const offerPreparationService = new OfferPreparationService(
 const offerAnalysisInputProjector = new OfferAnalysisInputProjector();
 const offerAnalysisNormalizer = new OfferAnalysisNormalizer();
 const offerAnalysisValidator = new OfferAnalysisValidator(offerAnalysisNormalizer);
+const offerAnalysisEvidenceReconciler = new OfferAnalysisEvidenceReconciler();
 const offerAnalyzerPrompt = new OfferAnalyzerPrompt();
 const analyzerGroqClient = new GroqJsonClient({
   apiKey: config.groq.apiKey,
@@ -135,6 +137,7 @@ const offerAnalyzerService = new OfferAnalyzerService({
   promptBuilder: offerAnalyzerPrompt,
   groqClient: analyzerGroqClient,
   analysisValidator: offerAnalysisValidator,
+  evidenceReconciler: offerAnalysisEvidenceReconciler,
   config: offerAnalyzerConfig,
 });
 const offerAnalysisService = new OfferAnalysisService({

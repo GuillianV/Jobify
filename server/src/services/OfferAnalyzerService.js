@@ -27,6 +27,7 @@ class OfferAnalyzerService {
    * @param {import("./OfferAnalyzerPrompt.js").OfferAnalyzerPrompt} dependencies.promptBuilder - Prompt builder.
    * @param {import("./GroqJsonClient.js").GroqJsonClient} dependencies.groqClient - JSON transport.
    * @param {import("./OfferAnalysisValidator.js").OfferAnalysisValidator} dependencies.analysisValidator - Output validator.
+   * @param {import("./OfferAnalysisEvidenceReconciler.js").OfferAnalysisEvidenceReconciler} dependencies.evidenceReconciler - Local evidence reconciler.
    * @param {object} dependencies.config - Analyzer execution config.
    * @param {object} [dependencies.logger] - Server diagnostic sink.
    */
@@ -37,6 +38,7 @@ class OfferAnalyzerService {
     promptBuilder,
     groqClient,
     analysisValidator,
+    evidenceReconciler,
     config,
     logger = console,
   }) {
@@ -46,6 +48,7 @@ class OfferAnalyzerService {
     this.promptBuilder = promptBuilder;
     this.groqClient = groqClient;
     this.analysisValidator = analysisValidator;
+    this.evidenceReconciler = evidenceReconciler;
     this.logger = logger;
     this.config = Object.freeze({ ...config });
     this.executionMetadata = Object.freeze({
@@ -100,20 +103,26 @@ class OfferAnalyzerService {
     try {
       offerAnalysis = this.analysisValidator.validate(rawAnalysis, input.effectiveText);
     } catch (error) {
-      if (!(error instanceof OfferAnalysisValidationError)) {
-        throw error;
+      if (this.isReconciliableEvidenceFailure(error)) {
+        const reconciliation = this.evidenceReconciler.reconcile(
+          rawAnalysis,
+          input.effectiveText,
+        );
+        if (reconciliation.changed) {
+          try {
+            offerAnalysis = this.analysisValidator.validate(
+              reconciliation.analysis,
+              input.effectiveText,
+            );
+          } catch (terminalError) {
+            throw this.mapValidationError(terminalError);
+          }
+        } else {
+          throw this.mapValidationError(error);
+        }
+      } else {
+        throw this.mapValidationError(error);
       }
-      const diagnostic = this.createInvalidOutputSafeDetails(error);
-      const safeDetails = { validationCode: diagnostic.validationCode };
-      if (diagnostic.validationSubcode !== null) {
-        safeDetails.validationSubcode = diagnostic.validationSubcode;
-      }
-      this.logInvalidOutputDiagnostic(diagnostic);
-      throw new OfferAnalyzerError(
-        OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
-        safeDetails,
-        error,
-      );
     }
     return {
       offerAnalysis,
@@ -128,6 +137,40 @@ class OfferAnalyzerService {
         maxOutputTokens: completion.maxOutputTokens,
       },
     };
+  }
+
+  /**
+   * Tell whether one validator failure permits local mechanical reconciliation.
+   * @param {unknown} error - Validator failure candidate.
+   * @returns {boolean} True only for exact explicit-evidence misses.
+   */
+  isReconciliableEvidenceFailure(error) {
+    return error instanceof OfferAnalysisValidationError
+      && error.validationCode === OfferAnalysisValidationError.CODE.EVIDENCE
+      && error.validationSubcode === OfferAnalysisValidationError.EVIDENCE_SUBCODE
+        .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND;
+  }
+
+  /**
+   * Preserve historical validation mapping and emit one terminal safe diagnostic.
+   * @param {unknown} error - Terminal validator failure.
+   * @returns {Error} Historical mapped error or untouched unexpected failure.
+   */
+  mapValidationError(error) {
+    if (!(error instanceof OfferAnalysisValidationError)) {
+      return error;
+    }
+    const diagnostic = this.createInvalidOutputSafeDetails(error);
+    const safeDetails = { validationCode: diagnostic.validationCode };
+    if (diagnostic.validationSubcode !== null) {
+      safeDetails.validationSubcode = diagnostic.validationSubcode;
+    }
+    this.logInvalidOutputDiagnostic(diagnostic);
+    return new OfferAnalyzerError(
+      OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
+      safeDetails,
+      error,
+    );
   }
 
   /**
