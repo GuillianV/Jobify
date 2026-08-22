@@ -419,6 +419,26 @@ test("generic provider diagnostics are server-only structured safe metadata", as
   assert.deepEqual(stableError.safeDetails, error.safeDetails);
 });
 
+test("invalid transport output logs only one closed empty diagnostic", async () => {
+  const original = new GroqJsonClientError(GroqJsonClientError.CODE.INVALID_RESPONSE);
+  const harness = createHarness({
+    groqClient: {
+      async completeJson() {
+        throw original;
+      },
+    },
+  });
+
+  const error = await captureError(harness.service.analyze(OFFER_ID));
+  assert.equal(error.code, OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT);
+  assert.deepEqual(error.safeDetails, {});
+  assert.deepEqual(harness.calls.diagnostics, [JSON.stringify({
+    event: "offer_analyzer_invalid_output",
+    validationCode: null,
+    validationSubcode: null,
+  })]);
+});
+
 test("unknown Groq transport codes remain unexpected errors", async () => {
   const original = new GroqJsonClientError("UNKNOWN_CODE");
   const harness = createHarness({
@@ -455,6 +475,11 @@ test("dedicated validation failures map without masking generic TypeErrors", asy
     safeDetails: mapped.safeDetails,
   });
   assert.equal(exposable.includes(sensitiveSentinel), false);
+  assert.deepEqual(validationHarness.calls.diagnostics, [JSON.stringify({
+    event: "offer_analyzer_invalid_output",
+    validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+    validationSubcode: null,
+  })]);
 
   const subcodeHarness = createHarness({
     analysisValidator: {
@@ -482,6 +507,13 @@ test("dedicated validation failures map without masking generic TypeErrors", asy
       .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
   });
   assert.equal(JSON.stringify(mappedSubcode.safeDetails).includes(sensitiveSentinel), false);
+  assert.deepEqual(subcodeHarness.calls.diagnostics, [JSON.stringify({
+    event: "offer_analyzer_invalid_output",
+    validationCode: OfferAnalysisValidationError.CODE.EVIDENCE,
+    validationSubcode: OfferAnalysisValidationError.EVIDENCE_SUBCODE
+      .EXPLICIT_EVIDENCE_TEXT_NOT_FOUND,
+  })]);
+  assert.equal(subcodeHarness.calls.diagnostics[0].includes(sensitiveSentinel), false);
 
   const enumHarness = createHarness({
     analysisValidator: {
@@ -559,6 +591,52 @@ test("dedicated validation failures map without masking generic TypeErrors", asy
     validationCode: OfferAnalysisValidationError.CODE.ENUM,
   });
   assert.equal(Object.hasOwn(mappedAlteredCode.safeDetails, "validationSubcode"), false);
+
+  const unsafeDetailsHarness = createHarness({
+    analysisValidator: {
+      validate() {
+        const error = new OfferAnalysisValidationError({
+          validationCode: OfferAnalysisValidationError.CODE.STRUCTURE,
+          message: sensitiveSentinel,
+        });
+        error.validationCode = sensitiveSentinel;
+        error.validationSubcode = sensitiveSentinel;
+        throw error;
+      },
+    },
+  });
+  const unsafeDetailsError = await captureError(
+    unsafeDetailsHarness.service.analyze(OFFER_ID),
+  );
+  assert.deepEqual(unsafeDetailsError.safeDetails, { validationCode: null });
+  assert.deepEqual(unsafeDetailsHarness.calls.diagnostics, [JSON.stringify({
+    event: "offer_analyzer_invalid_output",
+    validationCode: null,
+    validationSubcode: null,
+  })]);
+  assert.equal(unsafeDetailsHarness.calls.diagnostics[0].includes(sensitiveSentinel), false);
+
+  const failingLoggerOriginal = new OfferAnalysisValidationError({
+    validationCode: OfferAnalysisValidationError.CODE.STRUCTURE,
+    message: sensitiveSentinel,
+  });
+  const failingLoggerHarness = createHarness({
+    analysisValidator: {
+      validate() {
+        throw failingLoggerOriginal;
+      },
+    },
+    logger: {
+      warn() {
+        throw new Error("diagnostic sink unavailable");
+      },
+    },
+  });
+  const stableInvalidOutput = await captureError(
+    failingLoggerHarness.service.analyze(OFFER_ID),
+  );
+  assert.equal(stableInvalidOutput.code, OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT);
+  assert.equal(stableInvalidOutput.cause, failingLoggerOriginal);
 
   const internalTypeError = new TypeError("internal bug");
   const internalHarness = createHarness({

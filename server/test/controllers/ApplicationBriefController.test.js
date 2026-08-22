@@ -165,6 +165,20 @@ test("controller keeps the exact public provider envelope with internal diagnost
   });
 });
 
+test("controller keeps the exact public invalid-output envelope with internal diagnostics", async () => {
+  const error = new OfferAnalyzerError(
+    OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
+    { validationCode: "EVIDENCE", validationSubcode: "EXPLICIT_EVIDENCE_TEXT_NOT_FOUND" },
+  );
+  const harness = createHarness({ error });
+  await harness.controller.generateForOffer({ params: { id: String(OFFER_ID) } }, {});
+  assert.deepEqual(harness.state.error, {
+    statusCode: HttpStatus.BAD_GATEWAY,
+    message: "Offer analysis provider returned an invalid response",
+    metadata: { code: OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT },
+  });
+});
+
 test("controller exposes stale input as conflict without its internal reason", async () => {
   const error = new ApplicationBriefContextValidationError(
     ApplicationBriefContextValidationError.REASON.STALE_INPUT,

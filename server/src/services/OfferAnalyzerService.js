@@ -7,6 +7,7 @@ import { OfferAnalysisValidationError } from "./OfferAnalysisValidationError.js"
 import { OfferAnalyzerError } from "./OfferAnalyzerError.js";
 
 const PROVIDER_DIAGNOSTIC_EVENT = "offer_analyzer_provider_error";
+const INVALID_OUTPUT_DIAGNOSTIC_EVENT = "offer_analyzer_invalid_output";
 const LOW_REASONING_EFFORT = "low";
 const LOW_REASONING_MODELS = new Set([
   "openai/gpt-oss-120b",
@@ -102,17 +103,12 @@ class OfferAnalyzerService {
       if (!(error instanceof OfferAnalysisValidationError)) {
         throw error;
       }
-      const safeDetails = { validationCode: error.validationCode };
-      if (error.validationCode === OfferAnalysisValidationError.CODE.EVIDENCE
-        && Object.values(OfferAnalysisValidationError.EVIDENCE_SUBCODE)
-          .includes(error.validationSubcode)) {
-        safeDetails.validationSubcode = error.validationSubcode;
+      const diagnostic = this.createInvalidOutputSafeDetails(error);
+      const safeDetails = { validationCode: diagnostic.validationCode };
+      if (diagnostic.validationSubcode !== null) {
+        safeDetails.validationSubcode = diagnostic.validationSubcode;
       }
-      if (error.validationCode === OfferAnalysisValidationError.CODE.ENUM
-        && Object.values(OfferAnalysisValidationError.ENUM_SUBCODE)
-          .includes(error.validationSubcode)) {
-        safeDetails.validationSubcode = error.validationSubcode;
-      }
+      this.logInvalidOutputDiagnostic(diagnostic);
       throw new OfferAnalyzerError(
         OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT,
         safeDetails,
@@ -304,6 +300,9 @@ class OfferAnalyzerService {
     if (!code) {
       throw error;
     }
+    if (error.code === GroqJsonClientError.CODE.INVALID_RESPONSE) {
+      this.logInvalidOutputDiagnostic({});
+    }
     if (error.code !== GroqJsonClientError.CODE.HTTP_ERROR) {
       return new OfferAnalyzerError(code, {}, error);
     }
@@ -325,6 +324,47 @@ class OfferAnalyzerService {
     try {
       this.logger.warn(JSON.stringify({
         event: PROVIDER_DIAGNOSTIC_EVENT,
+        ...safeDetails,
+      }));
+    } catch {
+      return;
+    }
+  }
+
+  /**
+   * Build closed diagnostic identifiers from one untrusted validation failure.
+   * @param {object} details - Validation detail candidates.
+   * @returns {{validationCode: string|null, validationSubcode: string|null}} Safe identifiers.
+   */
+  createInvalidOutputSafeDetails(details) {
+    const validationCode = Object.values(OfferAnalysisValidationError.CODE)
+      .includes(details?.validationCode)
+      ? details.validationCode
+      : null;
+    const validEvidenceSubcode = validationCode === OfferAnalysisValidationError.CODE.EVIDENCE
+      && Object.values(OfferAnalysisValidationError.EVIDENCE_SUBCODE)
+        .includes(details?.validationSubcode);
+    const validEnumSubcode = validationCode === OfferAnalysisValidationError.CODE.ENUM
+      && Object.values(OfferAnalysisValidationError.ENUM_SUBCODE)
+        .includes(details?.validationSubcode);
+    return {
+      validationCode,
+      validationSubcode: validEvidenceSubcode || validEnumSubcode
+        ? details.validationSubcode
+        : null,
+    };
+  }
+
+  /**
+   * Emit one closed invalid-output diagnostic without changing error propagation.
+   * @param {object} details - Validation detail candidates.
+   * @returns {void}
+   */
+  logInvalidOutputDiagnostic(details) {
+    const safeDetails = this.createInvalidOutputSafeDetails(details);
+    try {
+      this.logger.warn(JSON.stringify({
+        event: INVALID_OUTPUT_DIAGNOSTIC_EVENT,
         ...safeDetails,
       }));
     } catch {
