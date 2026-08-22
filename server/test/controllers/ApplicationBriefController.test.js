@@ -179,6 +179,23 @@ test("controller keeps the exact public invalid-output envelope with internal di
   });
 });
 
+test("controller keeps matcher invalid-output diagnostics server-only", async () => {
+  const error = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    null,
+    { validationCode: "SEMANTIC_VALIDATION", validationSubcode: "TYPE" },
+  );
+  const harness = createHarness({ error });
+  await harness.controller.generateForOffer({ params: { id: String(OFFER_ID) } }, {});
+  assert.deepEqual(harness.state.error, {
+    statusCode: HttpStatus.BAD_GATEWAY,
+    message: "Application brief provider returned an invalid response",
+    metadata: { code: "INVALID_APPLICATION_BRIEF_OUTPUT" },
+  });
+  assert.deepEqual(Object.keys(harness.state.error.metadata), ["code"]);
+});
+
 test("controller exposes stale input as conflict without its internal reason", async () => {
   const error = new ApplicationBriefContextValidationError(
     ApplicationBriefContextValidationError.REASON.STALE_INPUT,

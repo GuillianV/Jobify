@@ -43,14 +43,65 @@ function createMatch(state) {
  * @param {Function} action - Failing action.
  * @returns {void}
  */
-function expectInvalid(action) {
+function expectInvalid(action, expectedSubcode) {
   assert.throws(action, (error) => {
     assert.equal(error instanceof ApplicationBriefMatcherError, true);
     assert.equal(error.code, "INVALID_APPLICATION_BRIEF_OUTPUT");
     assert.equal(error.reason, "INVALID_SEMANTIC_OUTPUT");
+    if (expectedSubcode !== undefined) {
+      assert.deepEqual(error.safeDetails, {
+        validationCode: "SEMANTIC_VALIDATION",
+        validationSubcode: expectedSubcode,
+      });
+    }
     return true;
   });
 }
+
+test("semantic validator attaches closed diagnostics to representative failures", () => {
+  const cases = [];
+  cases.push([null, "ROOT_SHAPE_OR_KEYS"]);
+
+  const wrongType = createEmptyOutput();
+  wrongType.requirementMatches = null;
+  cases.push([wrongType, "TYPE"]);
+
+  const wrongEnum = createEmptyOutput();
+  wrongEnum.requirementMatches = [createMatch("UNKNOWN")];
+  cases.push([wrongEnum, "ENUM"]);
+
+  const excessive = createEmptyOutput();
+  excessive.emphasis = Array.from(
+    { length: ApplicationBriefLimits.MAX_EMPHASIS + 1 },
+    () => {
+      return {};
+    },
+  );
+  cases.push([excessive, "CARDINALITY"]);
+
+  const duplicate = createEmptyOutput();
+  duplicate.requirementMatches = [createMatch("SUPPORTED"), createMatch("SUPPORTED")];
+  cases.push([duplicate, "DUPLICATE"]);
+
+  const invalidState = createEmptyOutput();
+  invalidState.requirementMatches = [createMatch("SUPPORTED")];
+  invalidState.requirementMatches[0].notEvidencedFacets = [{ text: "5 ans" }];
+  cases.push([invalidState, "STATE_FACET_INVARIANT"]);
+
+  const claimMismatch = createEmptyOutput();
+  claimMismatch.supportedClaims = [{
+    claimType: "SKILL_DECLARATION",
+    offerRefs: [structuredClone(REQUIREMENT_REF)],
+    evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+  }];
+  cases.push([claimMismatch, "CLAIM_EVIDENCE_KIND_MISMATCH"]);
+
+  for (const [candidate, subcode] of cases) {
+    expectInvalid(() => {
+      new ApplicationBriefSemanticOutputValidator().validate(candidate);
+    }, subcode);
+  }
+});
 
 test("valid empty semantic output is detached and preserves input without mutation", () => {
   const input = createEmptyOutput();
@@ -394,7 +445,7 @@ test("match-wide evidence union enforces its limit and counts shared refs once",
   });
   expectInvalid(() => {
     new ApplicationBriefSemanticOutputValidator().validate(excessive);
-  });
+  }, "CARDINALITY");
 });
 
 test("global evidence union enforces the final fact limit and counts cross-root refs once", () => {
@@ -447,7 +498,7 @@ test("global evidence union enforces the final fact limit and counts cross-root 
   }];
   expectInvalid(() => {
     new ApplicationBriefSemanticOutputValidator().validate(excessive);
-  });
+  }, "EVIDENCE_GLOBAL_LIMIT");
 });
 
 test("normative collection ref and facet limits are enforced", () => {

@@ -44,6 +44,7 @@ const CLAIM_EVIDENCE_KIND = Object.freeze({
   LANGUAGE_DECLARATION: ApplicationBriefConstants.EVIDENCE_KIND.LANGUAGE,
   SOFT_SKILL_DECLARATION: ApplicationBriefConstants.EVIDENCE_KIND.SOFT_SKILL,
 });
+const SUBCODE = ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE;
 
 /**
  * Validates the strict semantic-only output accepted from the future matcher.
@@ -55,7 +56,7 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {object} Detached validated semantic output preserving caller order.
    */
   validate(candidate) {
-    this.requireExactObject(candidate, ROOT_KEYS);
+    this.requireExactObject(candidate, ROOT_KEYS, SUBCODE.ROOT_SHAPE_OR_KEYS);
     this.validateRequirementMatches(candidate.requirementMatches);
     this.validateEmphasis(candidate.emphasis);
     this.validateSupportedClaims(candidate.supportedClaims);
@@ -86,7 +87,7 @@ class ApplicationBriefSemanticOutputValidator {
       this.addEvidenceRefKeys(references, item.evidenceRefs);
     }
     if (references.size > ApplicationBriefLimits.MAX_EVIDENCE_FACTS) {
-      this.fail();
+      this.fail(SUBCODE.EVIDENCE_GLOBAL_LIMIT);
     }
   }
 
@@ -114,7 +115,7 @@ class ApplicationBriefSemanticOutputValidator {
       this.requireExactObject(match, REQUIREMENT_MATCH_KEYS);
       this.validateOfferRef(match.offerRef, ApplicationBriefConstants.OFFER_REF_KIND.REQUIREMENT);
       if (indices.has(match.offerRef.index)) {
-        this.fail();
+        this.fail(SUBCODE.DUPLICATE);
       }
       indices.add(match.offerRef.index);
       this.requireEnum(match.state, ApplicationBriefConstants.EVIDENCE_STATE);
@@ -136,7 +137,7 @@ class ApplicationBriefSemanticOutputValidator {
       this.requireExactObject(facet, SUPPORTED_FACET_KEYS);
       this.requireText(facet.text, OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH);
       if (texts.has(facet.text)) {
-        this.fail();
+        this.fail(SUBCODE.DUPLICATE);
       }
       texts.add(facet.text);
       this.validateEvidenceRefs(facet.evidenceRefs, true);
@@ -155,7 +156,7 @@ class ApplicationBriefSemanticOutputValidator {
       this.requireExactObject(facet, NOT_EVIDENCED_FACET_KEYS);
       this.requireText(facet.text, OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH);
       if (texts.has(facet.text)) {
-        this.fail();
+        this.fail(SUBCODE.DUPLICATE);
       }
       texts.add(facet.text);
     }
@@ -170,21 +171,21 @@ class ApplicationBriefSemanticOutputValidator {
     const supportedCount = match.supportedFacets.length;
     const missingCount = match.notEvidencedFacets.length;
     if (supportedCount + missingCount > ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH) {
-      this.fail();
+      this.fail(SUBCODE.CARDINALITY);
     }
     if (match.supportedFacets.some((supported) => {
       return match.notEvidencedFacets.some((missing) => {
         return missing.text === supported.text;
       });
     })) {
-      this.fail();
+      this.fail(SUBCODE.STATE_FACET_INVARIANT);
     }
     const states = ApplicationBriefConstants.EVIDENCE_STATE;
     const valid = (match.state === states.SUPPORTED && supportedCount > 0 && missingCount === 0)
       || (match.state === states.PARTIALLY_SUPPORTED && supportedCount > 0 && missingCount > 0)
       || (match.state === states.NOT_EVIDENCED && supportedCount === 0 && missingCount > 0);
     if (!valid) {
-      this.fail();
+      this.fail(SUBCODE.STATE_FACET_INVARIANT);
     }
     const references = new Set();
     for (const facet of match.supportedFacets) {
@@ -193,7 +194,7 @@ class ApplicationBriefSemanticOutputValidator {
       }
     }
     if (references.size > ApplicationBriefLimits.MAX_EVIDENCE_REFS_PER_ITEM) {
-      this.fail();
+      this.fail(SUBCODE.CARDINALITY);
     }
   }
 
@@ -229,7 +230,7 @@ class ApplicationBriefSemanticOutputValidator {
       if (claim.evidenceRefs.some((reference) => {
         return reference.kind !== CLAIM_EVIDENCE_KIND[claim.claimType];
       })) {
-        this.fail();
+        this.fail(SUBCODE.CLAIM_EVIDENCE_KIND_MISMATCH);
       }
       this.rejectDuplicateSignature(signatures, claim);
     }
@@ -266,11 +267,11 @@ class ApplicationBriefSemanticOutputValidator {
       this.requireExactObject(reference, INDEXED_OFFER_REF_KEYS);
       this.requireEnum(reference.kind, ApplicationBriefConstants.OFFER_REF_KIND);
       if (!Number.isSafeInteger(reference.index) || reference.index < 0) {
-        this.fail();
+        this.fail(SUBCODE.TYPE);
       }
     }
     if (requiredKind !== undefined && reference.kind !== requiredKind) {
-      this.fail();
+      this.fail(SUBCODE.TYPE);
     }
   }
 
@@ -283,7 +284,7 @@ class ApplicationBriefSemanticOutputValidator {
   validateOfferRefs(references, nonEmpty) {
     this.requireArray(references, ApplicationBriefLimits.MAX_REFS_PER_ITEM);
     if (nonEmpty && references.length === 0) {
-      this.fail();
+      this.fail(SUBCODE.CARDINALITY);
     }
     const keys = new Set();
     for (const reference of references) {
@@ -291,7 +292,7 @@ class ApplicationBriefSemanticOutputValidator {
       const key = reference.kind === ApplicationBriefConstants.OFFER_REF_KIND.SENIORITY
         ? reference.kind : `${reference.kind}:${reference.index}`;
       if (keys.has(key)) {
-        this.fail();
+        this.fail(SUBCODE.DUPLICATE);
       }
       keys.add(key);
     }
@@ -306,14 +307,14 @@ class ApplicationBriefSemanticOutputValidator {
   validateEvidenceRefs(references, nonEmpty) {
     this.requireArray(references, ApplicationBriefLimits.MAX_REFS_PER_ITEM);
     if (nonEmpty && references.length === 0) {
-      this.fail();
+      this.fail(SUBCODE.CARDINALITY);
     }
     const keys = new Set();
     for (const reference of references) {
       this.validateEvidenceRef(reference);
       const key = this.evidenceRefKey(reference);
       if (keys.has(key)) {
-        this.fail();
+        this.fail(SUBCODE.DUPLICATE);
       }
       keys.add(key);
     }
@@ -330,15 +331,15 @@ class ApplicationBriefSemanticOutputValidator {
     if (typeof reference.itemId !== "string" || !reference.itemId
       || reference.itemId.length > CandidateDossierLimits.MAXIMUM_ID_LENGTH
       || !ID_PATTERN.test(reference.itemId)) {
-      this.fail();
+      this.fail(SUBCODE.TEXT_OR_IDENTIFIER_FORMAT);
     }
     if (typeof reference.field !== "string") {
-      this.fail();
+      this.fail(SUBCODE.TYPE);
     }
     const scalar = SCALAR_FIELDS[reference.kind]?.includes(reference.field);
     const indexedMatch = reference.field.match(ARRAY_FIELD_PATTERN);
     if (!scalar && !this.isValidIndexedField(reference.kind, indexedMatch)) {
-      this.fail();
+      this.fail(SUBCODE.TEXT_OR_IDENTIFIER_FORMAT);
     }
   }
 
@@ -377,7 +378,7 @@ class ApplicationBriefSemanticOutputValidator {
   rejectDuplicateSignature(signatures, value) {
     const signature = this.canonicalize(value);
     if (signatures.has(signature)) {
-      this.fail();
+      this.fail(SUBCODE.DUPLICATE);
     }
     signatures.add(signature);
   }
@@ -415,18 +416,19 @@ class ApplicationBriefSemanticOutputValidator {
    * Require one exact plain-object key set.
    * @param {unknown} value - Object candidate.
    * @param {string[]} expectedKeys - Exact required keys.
+   * @param {string} [subcode] - Closed shape category.
    * @returns {void}
    */
-  requireExactObject(value, expectedKeys) {
+  requireExactObject(value, expectedKeys, subcode = SUBCODE.NESTED_SHAPE_OR_KEYS) {
     if (value === null || typeof value !== "object" || Array.isArray(value)
       || Object.getPrototypeOf(value) !== Object.prototype) {
-      this.fail();
+      this.fail(subcode);
     }
     const keys = Object.keys(value);
     if (keys.length !== expectedKeys.length || keys.some((key) => {
       return !expectedKeys.includes(key);
     })) {
-      this.fail();
+      this.fail(subcode);
     }
   }
 
@@ -437,8 +439,11 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   requireArray(value, maximum) {
-    if (!Array.isArray(value) || value.length > maximum) {
-      this.fail();
+    if (!Array.isArray(value)) {
+      this.fail(SUBCODE.TYPE);
+    }
+    if (value.length > maximum) {
+      this.fail(SUBCODE.CARDINALITY);
     }
   }
 
@@ -450,7 +455,7 @@ class ApplicationBriefSemanticOutputValidator {
    */
   requireEnum(value, enumObject) {
     if (!Object.values(enumObject).includes(value)) {
-      this.fail();
+      this.fail(SUBCODE.ENUM);
     }
   }
 
@@ -462,18 +467,24 @@ class ApplicationBriefSemanticOutputValidator {
    */
   requireText(value, maximum) {
     if (typeof value !== "string" || !value.trim() || value.length > maximum) {
-      this.fail();
+      this.fail(SUBCODE.TEXT_OR_IDENTIFIER_FORMAT);
     }
   }
 
   /**
    * Raise the single closed semantic contract failure.
+   * @param {string} subcode - Closed semantic validation category.
    * @returns {never}
    */
-  fail() {
+  fail(subcode) {
     throw new ApplicationBriefMatcherError(
       ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
       ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+      null,
+      {
+        validationCode: ApplicationBriefMatcherError.VALIDATION_CODE.SEMANTIC_VALIDATION,
+        validationSubcode: subcode,
+      },
     );
   }
 }

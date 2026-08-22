@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApplicationBriefIntegritySigner } from "../../src/services/ApplicationBriefIntegritySigner.js";
+import { ApplicationBriefContextValidationError } from "../../src/services/ApplicationBriefContextValidationError.js";
+import { ApplicationBriefMatcherError } from "../../src/services/ApplicationBriefMatcherError.js";
 import { ApplicationBriefService } from "../../src/services/ApplicationBriefService.js";
+import { GroqJsonClientError } from "../../src/services/GroqJsonClientError.js";
 
 const REQUESTED_OFFER_ID = 42;
 const AUTHORITATIVE_OFFER_ID = 84;
@@ -14,7 +17,7 @@ const SIGNING_SECRET_BYTES = 32;
  * @returns {object} Service, inputs, result, and captured calls.
  */
 function createHarness(behavior = {}) {
-  const calls = { analysis: [], candidate: 0, builder: [], sign: [] };
+  const calls = { analysis: [], candidate: 0, builder: [], sign: [], logs: [] };
   const analysis = { requirements: [] };
   const offerSnapshot = { offerId: AUTHORITATIVE_OFFER_ID, title: "Backend Engineer" };
   const identity = {
@@ -79,6 +82,14 @@ function createHarness(behavior = {}) {
     candidateDossierService,
     applicationBriefBuilder,
     applicationBriefIntegritySigner: signer,
+    logger: {
+      warn(value) {
+        calls.logs.push(value);
+        if (behavior.loggerError) {
+          throw behavior.loggerError;
+        }
+      },
+    },
   });
   return { service, calls, analysisResult, candidateResult, brief, briefJson, signer };
 }
@@ -113,6 +124,7 @@ for (const cacheHit of [true, false]) {
     assert.equal("updatedAt" in harness.calls.builder[0], false);
     assert.deepEqual(harness.analysisResult, analysisSnapshot);
     assert.deepEqual(harness.candidateResult, candidateSnapshot);
+    assert.deepEqual(harness.calls.logs, []);
   });
 }
 
@@ -125,4 +137,130 @@ test("service propagates collaborator failures without wrapping", async () => {
     });
     assert.deepEqual(harness.calls.sign, []);
   }
+});
+
+test("service logs provider invalid response once with closed details", async () => {
+  const cause = new GroqJsonClientError(GroqJsonClientError.CODE.INVALID_RESPONSE);
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    cause,
+  );
+  const harness = createHarness({ builderError: expected });
+
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+    event: "application_brief_semantic_matcher_invalid_output",
+    validationCode: "PROVIDER_INVALID_RESPONSE",
+    validationSubcode: null,
+  }]);
+});
+
+test("service logs semantic validation once and neutralizes unsafe details", async () => {
+  const cases = [
+    [
+      new ApplicationBriefMatcherError(
+        ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+        ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+        null,
+        { validationCode: "SEMANTIC_VALIDATION", validationSubcode: "ENUM" },
+      ),
+      { validationCode: "SEMANTIC_VALIDATION", validationSubcode: "ENUM" },
+    ],
+    [
+      new ApplicationBriefMatcherError(
+        ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+        ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+        null,
+        { validationCode: "private code", validationSubcode: "private detail" },
+      ),
+      { validationCode: null, validationSubcode: null },
+    ],
+    [
+      new ApplicationBriefMatcherError(
+        ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+        ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+        null,
+        { validationCode: "PROVIDER_INVALID_RESPONSE", validationSubcode: "ENUM" },
+      ),
+      { validationCode: null, validationSubcode: null },
+    ],
+  ];
+  for (const [expected, details] of cases) {
+    const harness = createHarness({ builderError: expected });
+    await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+      return error === expected;
+    });
+    assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+      event: "application_brief_semantic_matcher_invalid_output",
+      ...details,
+    }]);
+  }
+});
+
+test("service logs only mapped contextual invalid-output reasons", async () => {
+  const reasons = [
+    ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE,
+    ApplicationBriefContextValidationError.REASON.INVALID_OFFER_REFERENCE,
+    ApplicationBriefContextValidationError.REASON.FACET_NOT_IN_REQUIREMENT,
+    ApplicationBriefContextValidationError.REASON.INCOMPLETE_REQUIREMENT_COVERAGE,
+  ];
+  for (const reason of reasons) {
+    const cause = new ApplicationBriefContextValidationError(reason);
+    const expected = new ApplicationBriefMatcherError(
+      ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+      ApplicationBriefMatcherError.REASON.INVALID_CONTEXTUAL_OUTPUT,
+      cause,
+    );
+    const harness = createHarness({ builderError: expected });
+    await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+      return error === expected;
+    });
+    assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+      event: "application_brief_semantic_matcher_invalid_output",
+      validationCode: "CONTEXTUAL_VALIDATION",
+      validationSubcode: reason,
+    }]);
+  }
+});
+
+test("service leaves non-invalid-output failures unlogged", async () => {
+  const errors = [
+    new ApplicationBriefContextValidationError(
+      ApplicationBriefContextValidationError.REASON.STALE_INPUT,
+    ),
+    new ApplicationBriefContextValidationError(
+      ApplicationBriefContextValidationError.REASON.EVIDENCE_VALUE_MISMATCH,
+    ),
+    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.RATE_LIMITED),
+    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.TIMEOUT),
+    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.PROVIDER_ERROR),
+    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET),
+  ];
+  for (const expected of errors) {
+    const harness = createHarness({ builderError: expected });
+    await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+      return error === expected;
+    });
+    assert.deepEqual(harness.calls.logs, []);
+  }
+});
+
+test("logger failure never masks terminal invalid output", async () => {
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    null,
+    { validationCode: "SEMANTIC_VALIDATION", validationSubcode: "TYPE" },
+  );
+  const harness = createHarness({
+    builderError: expected,
+    loggerError: new Error("private logger failure"),
+  });
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.equal(harness.calls.logs.length, 1);
 });

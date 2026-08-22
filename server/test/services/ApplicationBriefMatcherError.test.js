@@ -16,6 +16,23 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
     "INVALID_SEMANTIC_OUTPUT",
     "INVALID_CONTEXTUAL_OUTPUT",
   ]);
+  assert.deepEqual(Object.values(ApplicationBriefMatcherError.VALIDATION_CODE), [
+    "PROVIDER_INVALID_RESPONSE",
+    "SEMANTIC_VALIDATION",
+    "CONTEXTUAL_VALIDATION",
+  ]);
+  assert.deepEqual(Object.values(ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE), [
+    "ROOT_SHAPE_OR_KEYS",
+    "NESTED_SHAPE_OR_KEYS",
+    "TYPE",
+    "ENUM",
+    "TEXT_OR_IDENTIFIER_FORMAT",
+    "CARDINALITY",
+    "DUPLICATE",
+    "STATE_FACET_INVARIANT",
+    "CLAIM_EVIDENCE_KIND_MISMATCH",
+    "EVIDENCE_GLOBAL_LIMIT",
+  ]);
   const cause = new Error("private cause");
   const error = new ApplicationBriefMatcherError(
     ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
@@ -24,5 +41,8 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
   );
   assert.equal(error.message, "INVALID_APPLICATION_BRIEF_OUTPUT");
   assert.equal(error.cause, cause);
-  assert.equal("safeDetails" in error, false);
+  assert.deepEqual(error.safeDetails, {
+    validationCode: null,
+    validationSubcode: null,
+  });
 });
