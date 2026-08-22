@@ -1,4 +1,5 @@
 import { OfferAnalyzerConstants } from "../constants/OfferAnalyzerConstants.js";
+import { OfferAnalysisJsonSchema } from "../constants/OfferAnalysisJsonSchema.js";
 import { OfferAnalysisConstants } from "../constants/OfferAnalysisConstants.js";
 import { OfferContentEvaluationConstants } from "../constants/OfferContentEvaluationConstants.js";
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
@@ -229,6 +230,7 @@ class OfferAnalyzerService {
       model: this.config.model,
       timeout: this.config.timeout,
       maxTokens,
+      responseFormat: OfferAnalysisJsonSchema.createResponseFormat(),
     });
   }
 

@@ -153,6 +153,73 @@ test("request uses strict Groq JSON mode and returns parsed values", async () =>
   assert.equal(await primitiveClient.completeJson(createRequest()), "hello");
 });
 
+test("request accepts one detached strict JSON Schema response format", async () => {
+  let capturedBody;
+  const responseFormat = {
+    type: "json_schema",
+    json_schema: {
+      name: "test_schema",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: { valid: { type: "boolean" } },
+        required: ["valid"],
+        additionalProperties: false,
+      },
+    },
+  };
+  const original = structuredClone(responseFormat);
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async (endpoint, options) => {
+      capturedBody = JSON.parse(options.body);
+      return createResponse({ valid: true });
+    },
+  });
+
+  await client.completeJson({ ...createRequest(), responseFormat });
+
+  assert.deepEqual(capturedBody.response_format, original);
+  assert.deepEqual(responseFormat, original);
+  assert.equal(capturedBody.model, MODEL);
+  assert.equal(capturedBody.temperature, GroqConstants.TEMPERATURE);
+  assert.equal(capturedBody.max_tokens, MAX_TOKENS);
+  assert.deepEqual(capturedBody.messages, [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: USER_PROMPT },
+  ]);
+});
+
+test("request rejects unsupported or exotic response formats before fetch", async () => {
+  let calls = 0;
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      calls += 1;
+      return createResponse({ valid: true });
+    },
+  });
+  const invalidFormats = [
+    null,
+    [],
+    { type: "json_object", extra: true },
+    { type: "json_schema" },
+    {
+      type: "json_schema",
+      json_schema: { name: "test", strict: false, schema: {} },
+    },
+    Object.create(null),
+  ];
+
+  for (const responseFormat of invalidFormats) {
+    await assert.rejects(
+      client.completeJson({ ...createRequest(), responseFormat }),
+      TypeError,
+    );
+  }
+  assert.equal(calls, 0);
+});
+
 test("timeout and network failures are classified and timers are cleared", async () => {
   let timeoutCleared;
   const timeoutClient = new GroqJsonClient({

@@ -93,6 +93,7 @@ test("happy path sends only the projection and returns exact immutable CoverLett
   assert.equal(requests[0].model, MODEL);
   assert.equal(requests[0].timeout, CoverLetterGeneratorConstants.TIMEOUT_MS);
   assert.equal(requests[0].maxTokens, CoverLetterGeneratorConstants.MAX_OUTPUT_TOKENS);
+  assert.equal(Object.hasOwn(requests[0], "responseFormat"), false);
   assert.equal(requests[0].userPrompt.endsWith(JSON.stringify(input)), true);
   assert.deepEqual(input, snapshot);
 });

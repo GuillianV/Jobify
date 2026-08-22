@@ -10,6 +10,8 @@ const TOKEN_BUDGET_ERROR_CODE = "rate_limit_exceeded";
 const TOKEN_BUDGET_LIMIT_LABEL_PATTERN = /\bLimit\b/gu;
 const TOKEN_BUDGET_REQUESTED_LABEL_PATTERN = /\bRequested\b/gu;
 const TOKEN_BUDGET_PATTERN = /\bLimit\s+(\d+)(?![\d.]),\s*Requested\s+(\d+)(?![\d.])/gu;
+const DEFAULT_RESPONSE_FORMAT = Object.freeze({ type: "json_object" });
+const JSON_SCHEMA_RESPONSE_FORMAT_KEY_COUNT = 2;
 
 /**
  * Performs one provider-agnostic JSON chat completion through Groq transport.
@@ -49,10 +51,19 @@ class GroqJsonClient {
    * @param {string} request.model - Non-empty model identifier.
    * @param {number} request.timeout - Positive timeout in milliseconds.
    * @param {number} request.maxTokens - Positive output token limit.
+   * @param {object} [request.responseFormat] - Optional supported response format override.
    * @returns {Promise<unknown>} Parsed JSON content without business validation.
    */
-  async completeJson({ systemPrompt, userPrompt, model, timeout, maxTokens }) {
+  async completeJson({
+    systemPrompt,
+    userPrompt,
+    model,
+    timeout,
+    maxTokens,
+    responseFormat = DEFAULT_RESPONSE_FORMAT,
+  }) {
     this.validateRequest(systemPrompt, userPrompt, model, timeout, maxTokens);
+    const safeResponseFormat = this.validateResponseFormat(responseFormat);
     if (!this.apiKey) {
       throw new GroqJsonClientError(GroqJsonClientError.CODE.UNAVAILABLE);
     }
@@ -60,7 +71,7 @@ class GroqJsonClient {
       model,
       temperature: GroqConstants.TEMPERATURE,
       max_tokens: maxTokens,
-      response_format: { type: "json_object" },
+      response_format: safeResponseFormat,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -98,6 +109,45 @@ class GroqJsonClient {
     } finally {
       this.clearTimeoutImpl(timer);
     }
+  }
+
+  /**
+   * Validate and detach one supported Groq response format.
+   * @param {unknown} responseFormat - Caller-owned response format candidate.
+   * @returns {object} Detached supported response format.
+   */
+  validateResponseFormat(responseFormat) {
+    if (responseFormat === null
+      || typeof responseFormat !== "object"
+      || Array.isArray(responseFormat)
+      || Object.getPrototypeOf(responseFormat) !== Object.prototype) {
+      throw new TypeError("Groq responseFormat must be a plain object");
+    }
+    const keys = Object.keys(responseFormat);
+    if (responseFormat.type === "json_object"
+      && keys.length === 1
+      && keys[0] === "type") {
+      return structuredClone(responseFormat);
+    }
+    const jsonSchema = responseFormat.json_schema;
+    if (responseFormat.type !== "json_schema"
+      || keys.length !== JSON_SCHEMA_RESPONSE_FORMAT_KEY_COUNT
+      || !keys.includes("type")
+      || !keys.includes("json_schema")
+      || jsonSchema === null
+      || typeof jsonSchema !== "object"
+      || Array.isArray(jsonSchema)
+      || Object.getPrototypeOf(jsonSchema) !== Object.prototype
+      || typeof jsonSchema.name !== "string"
+      || !jsonSchema.name.trim()
+      || jsonSchema.strict !== true
+      || jsonSchema.schema === null
+      || typeof jsonSchema.schema !== "object"
+      || Array.isArray(jsonSchema.schema)
+      || Object.getPrototypeOf(jsonSchema.schema) !== Object.prototype) {
+      throw new TypeError("Groq responseFormat is unsupported");
+    }
+    return structuredClone(responseFormat);
   }
 
   /**

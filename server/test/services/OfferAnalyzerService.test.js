@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OfferAnalysisConstants } from "../../src/constants/OfferAnalysisConstants.js";
+import { OfferAnalysisJsonSchema } from "../../src/constants/OfferAnalysisJsonSchema.js";
 import { OfferAnalyzerConstants } from "../../src/constants/OfferAnalyzerConstants.js";
 import { OfferContentEvaluationConstants } from "../../src/constants/OfferContentEvaluationConstants.js";
 import { JobOffer } from "../../src/models/JobOffer.js";
@@ -113,6 +114,10 @@ function createHarness(overrides = {}) {
         assert.equal(request.model, MODEL);
         assert.equal(request.timeout, OfferAnalyzerConstants.TIMEOUT_MS);
         assert.equal(request.maxTokens, OfferAnalyzerConstants.MAX_OUTPUT_TOKENS);
+        assert.deepEqual(
+          request.responseFormat,
+          OfferAnalysisJsonSchema.createResponseFormat(),
+        );
         return raw;
       },
     },
@@ -559,6 +564,9 @@ test("recognized token-budget admission failure retries once with a safe lower c
   assert.equal(requests[1].userPrompt, requests[0].userPrompt);
   assert.equal(requests[1].model, requests[0].model);
   assert.equal(requests[1].timeout, requests[0].timeout);
+  const expectedResponseFormat = OfferAnalysisJsonSchema.createResponseFormat();
+  assert.deepEqual(requests[0].responseFormat, expectedResponseFormat);
+  assert.deepEqual(requests[1].responseFormat, expectedResponseFormat);
   assert.equal(result.analyzer.maxOutputTokens, RETRY_MAX_TOKENS);
   assert.equal(harness.calls.validator, 1);
 });
