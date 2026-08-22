@@ -22,6 +22,7 @@ const EVIDENCE = "Nous recherchons Java.";
 const POLICY_VERSION = "evaluation-v1";
 const TOKEN_BUDGET_ATTEMPTS = 2;
 const RETRY_MAX_TOKENS = 4048;
+const HTTP_BAD_REQUEST = 400;
 
 /**
  * Build minimal valid raw model output.
@@ -71,7 +72,15 @@ function createInput(effectiveText = EFFECTIVE_TEXT) {
  * @returns {{service: OfferAnalyzerService, calls: object, input: object, raw: object}} Harness.
  */
 function createHarness(overrides = {}) {
-  const calls = { repository: 0, evaluator: 0, projector: 0, prompt: 0, groq: 0, validator: 0 };
+  const calls = {
+    repository: 0,
+    evaluator: 0,
+    projector: 0,
+    prompt: 0,
+    groq: 0,
+    validator: 0,
+    diagnostics: [],
+  };
   const offer = overrides.offer ?? { offerContent: { value: EFFECTIVE_TEXT } };
   const input = overrides.input ?? createInput();
   const raw = overrides.raw ?? createAnalysis();
@@ -130,6 +139,11 @@ function createHarness(overrides = {}) {
       },
     },
     config: overrides.config ?? OfferAnalyzerService.buildConfig(MODEL),
+    logger: overrides.logger ?? {
+      warn(message) {
+        calls.diagnostics.push(message);
+      },
+    },
   };
   return { service: new OfferAnalyzerService(dependencies), calls, input, raw, offer };
 }
@@ -290,14 +304,15 @@ test("the exact maximum input length reaches the single Groq request", async () 
 
 test("Groq failures map to stable analyzer codes with one request", async () => {
   const mappings = [
-    [GroqJsonClientError.CODE.UNAVAILABLE, OfferAnalyzerError.CODE.ANALYZER_UNAVAILABLE],
-    [GroqJsonClientError.CODE.AUTHENTICATION_ERROR, OfferAnalyzerError.CODE.ANALYZER_UNAVAILABLE],
-    [GroqJsonClientError.CODE.TIMEOUT, OfferAnalyzerError.CODE.ANALYZER_TIMEOUT],
-    [GroqJsonClientError.CODE.RATE_LIMITED, OfferAnalyzerError.CODE.ANALYZER_RATE_LIMITED],
-    [GroqJsonClientError.CODE.HTTP_ERROR, OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR],
-    [GroqJsonClientError.CODE.INVALID_RESPONSE, OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT],
+    [GroqJsonClientError.CODE.UNAVAILABLE, OfferAnalyzerError.CODE.ANALYZER_UNAVAILABLE, {}],
+    [GroqJsonClientError.CODE.AUTHENTICATION_ERROR, OfferAnalyzerError.CODE.ANALYZER_UNAVAILABLE, {}],
+    [GroqJsonClientError.CODE.TIMEOUT, OfferAnalyzerError.CODE.ANALYZER_TIMEOUT, {}],
+    [GroqJsonClientError.CODE.RATE_LIMITED, OfferAnalyzerError.CODE.ANALYZER_RATE_LIMITED, {}],
+    [GroqJsonClientError.CODE.HTTP_ERROR, OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR,
+      { status: null, providerType: null, providerCode: null }],
+    [GroqJsonClientError.CODE.INVALID_RESPONSE, OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT, {}],
   ];
-  for (const [transportCode, analyzerCode] of mappings) {
+  for (const [transportCode, analyzerCode, safeDetails] of mappings) {
     let calls = 0;
     const harness = createHarness({
       groqClient: {
@@ -309,10 +324,62 @@ test("Groq failures map to stable analyzer codes with one request", async () => 
     });
     const error = await captureError(harness.service.analyze(OFFER_ID));
     assert.equal(error.code, analyzerCode);
-    assert.deepEqual(error.safeDetails, {});
+    assert.deepEqual(error.safeDetails, safeDetails);
     assert.equal(calls, 1);
     assert.equal(harness.calls.validator, 0);
   }
+});
+
+test("generic provider diagnostics are server-only structured safe metadata", async () => {
+  const sensitiveMessage = "private provider prompt echo";
+  const original = new GroqJsonClientError(
+    GroqJsonClientError.CODE.HTTP_ERROR,
+    {
+      status: HTTP_BAD_REQUEST,
+      providerType: "invalid_request_error",
+      providerCode: "invalid_json_schema",
+      message: sensitiveMessage,
+    },
+  );
+  const harness = createHarness({
+    groqClient: {
+      async completeJson() {
+        throw original;
+      },
+    },
+  });
+  assert.equal(Object.hasOwn(original.safeDetails, "message"), false);
+
+  const error = await captureError(harness.service.analyze(OFFER_ID));
+  assert.equal(error.code, OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR);
+  assert.deepEqual(error.safeDetails, {
+    status: HTTP_BAD_REQUEST,
+    providerType: "invalid_request_error",
+    providerCode: "invalid_json_schema",
+  });
+  assert.deepEqual(harness.calls.diagnostics, [JSON.stringify({
+    event: "offer_analyzer_provider_error",
+    status: HTTP_BAD_REQUEST,
+    providerType: "invalid_request_error",
+    providerCode: "invalid_json_schema",
+  })]);
+  assert.equal(harness.calls.diagnostics[0].includes(sensitiveMessage), false);
+
+  const failingLoggerHarness = createHarness({
+    groqClient: {
+      async completeJson() {
+        throw original;
+      },
+    },
+    logger: {
+      warn() {
+        throw new Error("diagnostic sink unavailable");
+      },
+    },
+  });
+  const stableError = await captureError(failingLoggerHarness.service.analyze(OFFER_ID));
+  assert.equal(stableError.code, OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR);
+  assert.deepEqual(stableError.safeDetails, error.safeDetails);
 });
 
 test("unknown Groq transport codes remain unexpected errors", async () => {

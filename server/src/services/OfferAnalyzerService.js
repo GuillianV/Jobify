@@ -6,6 +6,8 @@ import { GroqJsonClientError } from "./GroqJsonClientError.js";
 import { OfferAnalysisValidationError } from "./OfferAnalysisValidationError.js";
 import { OfferAnalyzerError } from "./OfferAnalyzerError.js";
 
+const PROVIDER_DIAGNOSTIC_EVENT = "offer_analyzer_provider_error";
+
 /**
  * Authoritatively analyzes one persisted READY offer into an in-memory result.
  */
@@ -20,6 +22,7 @@ class OfferAnalyzerService {
    * @param {import("./GroqJsonClient.js").GroqJsonClient} dependencies.groqClient - JSON transport.
    * @param {import("./OfferAnalysisValidator.js").OfferAnalysisValidator} dependencies.analysisValidator - Output validator.
    * @param {object} dependencies.config - Analyzer execution config.
+   * @param {object} [dependencies.logger] - Server diagnostic sink.
    */
   constructor({
     offerRepository,
@@ -29,6 +32,7 @@ class OfferAnalyzerService {
     groqClient,
     analysisValidator,
     config,
+    logger = console,
   }) {
     this.offerRepository = offerRepository;
     this.offerContentEvaluator = offerContentEvaluator;
@@ -36,6 +40,7 @@ class OfferAnalyzerService {
     this.promptBuilder = promptBuilder;
     this.groqClient = groqClient;
     this.analysisValidator = analysisValidator;
+    this.logger = logger;
     this.config = Object.freeze({ ...config });
     this.executionMetadata = Object.freeze({
       policyVersion: this.config.policyVersion,
@@ -290,7 +295,32 @@ class OfferAnalyzerService {
     if (!code) {
       throw error;
     }
-    return new OfferAnalyzerError(code, {}, error);
+    if (error.code !== GroqJsonClientError.CODE.HTTP_ERROR) {
+      return new OfferAnalyzerError(code, {}, error);
+    }
+    const safeDetails = GroqJsonClientError.createHttpSafeDetails(
+      error.safeDetails.status,
+      error.safeDetails.providerType,
+      error.safeDetails.providerCode,
+    );
+    this.logProviderDiagnostic(safeDetails);
+    return new OfferAnalyzerError(code, safeDetails, error);
+  }
+
+  /**
+   * Emit one closed server-only provider diagnostic without changing error handling.
+   * @param {object} safeDetails - Validated provider HTTP metadata.
+   * @returns {void}
+   */
+  logProviderDiagnostic(safeDetails) {
+    try {
+      this.logger.warn(JSON.stringify({
+        event: PROVIDER_DIAGNOSTIC_EVENT,
+        ...safeDetails,
+      }));
+    } catch {
+      return;
+    }
   }
 
   /**

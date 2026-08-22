@@ -130,11 +130,39 @@ test("controller maps OfferAnalyzer failures with the existing public taxonomy",
     [OfferAnalyzerError.CODE.ANALYZER_INVALID_OUTPUT, HttpStatus.BAD_GATEWAY],
   ];
   for (const [code, statusCode] of cases) {
-    const harness = createHarness({ error: new OfferAnalyzerError(code) });
+    const safeDetails = code === OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR
+      ? {
+        status: HttpStatus.BAD_REQUEST,
+        providerType: "invalid_request_error",
+        providerCode: "private_code",
+      }
+      : {};
+    const harness = createHarness({ error: new OfferAnalyzerError(code, safeDetails) });
     await harness.controller.generateForOffer({ params: { id: String(OFFER_ID) } }, {});
     assert.equal(harness.state.error.statusCode, statusCode);
     assert.equal(harness.state.error.metadata.code, code);
+    assert.equal(Object.hasOwn(harness.state.error.metadata, "status"), false);
+    assert.equal(Object.hasOwn(harness.state.error.metadata, "providerType"), false);
+    assert.equal(Object.hasOwn(harness.state.error.metadata, "providerCode"), false);
   }
+});
+
+test("controller keeps the exact public provider envelope with internal diagnostics", async () => {
+  const error = new OfferAnalyzerError(
+    OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR,
+    {
+      status: HttpStatus.BAD_REQUEST,
+      providerType: "invalid_request_error",
+      providerCode: "invalid_json_schema",
+    },
+  );
+  const harness = createHarness({ error });
+  await harness.controller.generateForOffer({ params: { id: String(OFFER_ID) } }, {});
+  assert.deepEqual(harness.state.error, {
+    statusCode: HttpStatus.BAD_GATEWAY,
+    message: "Offer analysis provider failed",
+    metadata: { code: OfferAnalyzerError.CODE.ANALYZER_PROVIDER_ERROR },
+  });
 });
 
 test("controller exposes stale input as conflict without its internal reason", async () => {

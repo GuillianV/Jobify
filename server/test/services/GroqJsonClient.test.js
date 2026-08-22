@@ -21,6 +21,8 @@ const HTTP_RATE_LIMITED = 429;
 const HTTP_SERVER_ERROR = 500;
 const TOKEN_LIMIT = 12000;
 const TOKEN_REQUESTED = 12047;
+const UNSAFE_PROVIDER_METADATA_LENGTH = 81;
+const UNSAFE_PROVIDER_METADATA_NUMBER = 42;
 
 /**
  * Build one successful fetch response containing serialized message JSON.
@@ -306,7 +308,121 @@ test("HTTP statuses have stable safe classifications", async () => {
     });
     const error = await captureError(client.completeJson(createRequest()));
     assert.equal(error.code, expectedCode);
-    assert.deepEqual(error.safeDetails, { status });
+    const expectedDetails = expectedCode === GroqJsonClientError.CODE.HTTP_ERROR
+      ? { status, providerType: null, providerCode: null }
+      : { status };
+    assert.deepEqual(error.safeDetails, expectedDetails);
+  }
+});
+
+test("generic HTTP errors retain only validated provider identifiers", async () => {
+  const sensitiveMessage = "synthetic message that must not be preserved";
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return createErrorResponse(HTTP_BAD_REQUEST, {
+        error: {
+          message: sensitiveMessage,
+          type: "invalid_request_error",
+          code: "invalid_json_schema",
+          unexpected: { anything: "must never escape" },
+        },
+      });
+    },
+  });
+
+  const error = await captureError(client.completeJson(createRequest()));
+  assert.equal(error.code, GroqJsonClientError.CODE.HTTP_ERROR);
+  assert.deepEqual(error.safeDetails, {
+    status: HTTP_BAD_REQUEST,
+    providerType: "invalid_request_error",
+    providerCode: "invalid_json_schema",
+  });
+  assert.equal(JSON.stringify(error).includes(sensitiveMessage), false);
+  assert.equal(Object.hasOwn(error.safeDetails, "message"), false);
+  assert.equal(Object.hasOwn(error.safeDetails, "body"), false);
+  assert.equal(Object.hasOwn(error.safeDetails, "unexpected"), false);
+});
+
+test("generic HTTP errors reject unsafe provider metadata without truncation", async () => {
+  const unsafeValues = [
+    "free text",
+    "line\nbreak",
+    "prompt-like {content}",
+    "x".repeat(UNSAFE_PROVIDER_METADATA_LENGTH),
+    UNSAFE_PROVIDER_METADATA_NUMBER,
+    { private: true },
+  ];
+  for (const unsafeValue of unsafeValues) {
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return createErrorResponse(HTTP_BAD_REQUEST, {
+          error: { type: unsafeValue, code: unsafeValue },
+        });
+      },
+    });
+    const error = await captureError(client.completeJson(createRequest()));
+    assert.deepEqual(error.safeDetails, {
+      status: HTTP_BAD_REQUEST,
+      providerType: null,
+      providerCode: null,
+    });
+  }
+});
+
+test("malformed empty and non-JSON error bodies never mask the HTTP failure", async () => {
+  const bodies = [[], null, { error: "private" }, { error: [] }, {
+    error: { type: UNSAFE_PROVIDER_METADATA_NUMBER, code: { private: true } },
+  }];
+  for (const body of bodies) {
+    let reads = 0;
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return {
+          ok: false,
+          status: HTTP_BAD_REQUEST,
+          async json() {
+            reads += 1;
+            return structuredClone(body);
+          },
+        };
+      },
+    });
+    const error = await captureError(client.completeJson(createRequest()));
+    assert.equal(error.code, GroqJsonClientError.CODE.HTTP_ERROR);
+    assert.deepEqual(error.safeDetails, {
+      status: HTTP_BAD_REQUEST,
+      providerType: null,
+      providerCode: null,
+    });
+    assert.equal(reads, 1);
+  }
+
+  for (const bodyError of [new SyntaxError("invalid JSON"), new Error("empty body")]) {
+    let reads = 0;
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return {
+          ok: false,
+          status: HTTP_BAD_REQUEST,
+          async json() {
+            reads += 1;
+            throw bodyError;
+          },
+        };
+      },
+    });
+    const error = await captureError(client.completeJson(createRequest()));
+    assert.equal(error.code, GroqJsonClientError.CODE.HTTP_ERROR);
+    assert.deepEqual(error.safeDetails, {
+      status: HTTP_BAD_REQUEST,
+      providerType: null,
+      providerCode: null,
+    });
+    assert.equal(reads, 1);
   }
 });
 
@@ -320,16 +436,24 @@ test("recognized HTTP 413 token budgets expose only strict safe integers", async
     ...sensitiveSentinels,
     `Limit ${TOKEN_LIMIT}, Requested ${TOKEN_REQUESTED}`,
   ].join(" ");
+  let bodyReads = 0;
   const client = new GroqJsonClient({
     apiKey: API_KEY,
     fetchImpl: async () => {
-      return createErrorResponse(HTTP_CONTENT_TOO_LARGE, {
-        error: {
-          type: "tokens",
-          code: "rate_limit_exceeded",
-          message,
+      return {
+        ok: false,
+        status: HTTP_CONTENT_TOO_LARGE,
+        async json() {
+          bodyReads += 1;
+          return {
+            error: {
+              type: "tokens",
+              code: "rate_limit_exceeded",
+              message,
+            },
+          };
         },
-      });
+      };
     },
   });
 
@@ -339,6 +463,7 @@ test("recognized HTTP 413 token budgets expose only strict safe integers", async
     limitTokens: TOKEN_LIMIT,
     requestedTokens: TOKEN_REQUESTED,
   });
+  assert.equal(bodyReads, 1);
   const exposable = JSON.stringify({
     code: error.code,
     safeDetails: error.safeDetails,
@@ -346,6 +471,38 @@ test("recognized HTTP 413 token budgets expose only strict safe integers", async
   for (const sentinel of sensitiveSentinels) {
     assert.equal(exposable.includes(sentinel), false);
   }
+});
+
+test("unrecognized HTTP 413 reads its body once and retains generic behavior", async () => {
+  let bodyReads = 0;
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return {
+        ok: false,
+        status: HTTP_CONTENT_TOO_LARGE,
+        async json() {
+          bodyReads += 1;
+          return {
+            error: {
+              type: "invalid_request_error",
+              code: "context_limit",
+              message: "synthetic raw provider message",
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const error = await captureError(client.completeJson(createRequest()));
+  assert.equal(error.code, GroqJsonClientError.CODE.HTTP_ERROR);
+  assert.deepEqual(error.safeDetails, {
+    status: HTTP_CONTENT_TOO_LARGE,
+    providerType: "invalid_request_error",
+    providerCode: "context_limit",
+  });
+  assert.equal(bodyReads, 1);
 });
 
 test("unrecognized or incoherent HTTP 413 bodies retain generic HTTP behavior", async () => {
@@ -380,7 +537,14 @@ test("unrecognized or incoherent HTTP 413 bodies retain generic HTTP behavior", 
     });
     const error = await captureError(client.completeJson(createRequest()));
     assert.equal(error.code, GroqJsonClientError.CODE.HTTP_ERROR);
-    assert.deepEqual(error.safeDetails, { status: HTTP_CONTENT_TOO_LARGE });
+    assert.deepEqual(
+      error.safeDetails,
+      GroqJsonClientError.createHttpSafeDetails(
+        HTTP_CONTENT_TOO_LARGE,
+        body?.error?.type,
+        body?.error?.code,
+      ),
+    );
   }
 
   const unreadableClient = new GroqJsonClient({
@@ -397,7 +561,11 @@ test("unrecognized or incoherent HTTP 413 bodies retain generic HTTP behavior", 
   });
   const unreadable = await captureError(unreadableClient.completeJson(createRequest()));
   assert.equal(unreadable.code, GroqJsonClientError.CODE.HTTP_ERROR);
-  assert.deepEqual(unreadable.safeDetails, { status: HTTP_CONTENT_TOO_LARGE });
+  assert.deepEqual(unreadable.safeDetails, {
+    status: HTTP_CONTENT_TOO_LARGE,
+    providerType: null,
+    providerCode: null,
+  });
 });
 
 test("invalid envelopes and content are rejected without leaking content", async () => {
