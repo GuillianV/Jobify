@@ -23,6 +23,8 @@ const POLICY_VERSION = "evaluation-v1";
 const TOKEN_BUDGET_ATTEMPTS = 2;
 const RETRY_MAX_TOKENS = 4048;
 const HTTP_BAD_REQUEST = 400;
+const GPT_OSS_120B_MODEL = "openai/gpt-oss-120b";
+const GPT_OSS_20B_MODEL = "openai/gpt-oss-20b";
 
 /**
  * Build minimal valid raw model output.
@@ -123,6 +125,7 @@ function createHarness(overrides = {}) {
         assert.equal(request.model, MODEL);
         assert.equal(request.timeout, OfferAnalyzerConstants.TIMEOUT_MS);
         assert.equal(request.maxTokens, OfferAnalyzerConstants.MAX_OUTPUT_TOKENS);
+        assert.equal(Object.hasOwn(request, "reasoningEffort"), false);
         assert.deepEqual(
           request.responseFormat,
           OfferAnalysisJsonSchema.createResponseFormat(),
@@ -174,6 +177,40 @@ test("invalid ids and absent offers stop before evaluation", async () => {
   const error = await captureError(absent.service.analyze(OFFER_ID));
   assert.equal(error.code, OfferAnalyzerError.CODE.OFFER_NOT_FOUND);
   assert.equal(absent.calls.evaluator, 0);
+});
+
+test("known GPT-OSS models opt into low reasoning and other models omit it", async () => {
+  for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
+    const requests = [];
+    const raw = createAnalysis();
+    const harness = createHarness({
+      config: OfferAnalyzerService.buildConfig(model),
+      raw,
+      groqClient: {
+        async completeJson(request) {
+          requests.push(structuredClone(request));
+          return raw;
+        },
+      },
+    });
+    await harness.service.analyzeProjectedInput(harness.input);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].reasoningEffort, "low");
+  }
+
+  const unsupportedRequests = [];
+  const unsupportedRaw = createAnalysis();
+  const unsupported = createHarness({
+    raw: unsupportedRaw,
+    groqClient: {
+      async completeJson(request) {
+        unsupportedRequests.push(structuredClone(request));
+        return unsupportedRaw;
+      },
+    },
+  });
+  await unsupported.service.analyzeProjectedInput(unsupported.input);
+  assert.equal(Object.hasOwn(unsupportedRequests[0], "reasoningEffort"), false);
 });
 
 test("non-sufficient authoritative evaluations stop all downstream work", async () => {
@@ -611,6 +648,7 @@ test("recognized token-budget admission failure retries once with a safe lower c
     { limitTokens: 12000, requestedTokens: 12047 },
   );
   const harness = createHarness({
+    config: OfferAnalyzerService.buildConfig(GPT_OSS_120B_MODEL),
     raw: retryRaw,
     groqClient: {
       async completeJson(request) {
@@ -631,6 +669,8 @@ test("recognized token-budget admission failure retries once with a safe lower c
   assert.equal(requests[1].userPrompt, requests[0].userPrompt);
   assert.equal(requests[1].model, requests[0].model);
   assert.equal(requests[1].timeout, requests[0].timeout);
+  assert.equal(requests[0].reasoningEffort, "low");
+  assert.equal(requests[1].reasoningEffort, "low");
   const expectedResponseFormat = OfferAnalysisJsonSchema.createResponseFormat();
   assert.deepEqual(requests[0].responseFormat, expectedResponseFormat);
   assert.deepEqual(requests[1].responseFormat, expectedResponseFormat);

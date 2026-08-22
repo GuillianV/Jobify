@@ -7,6 +7,11 @@ import { OfferAnalysisValidationError } from "./OfferAnalysisValidationError.js"
 import { OfferAnalyzerError } from "./OfferAnalyzerError.js";
 
 const PROVIDER_DIAGNOSTIC_EVENT = "offer_analyzer_provider_error";
+const LOW_REASONING_EFFORT = "low";
+const LOW_REASONING_MODELS = new Set([
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+]);
 
 /**
  * Authoritatively analyzes one persisted READY offer into an in-memory result.
@@ -230,13 +235,17 @@ class OfferAnalyzerService {
    * @returns {Promise<unknown>} Parsed untrusted JSON value.
    */
   async completeAnalysis(prompts, maxTokens) {
-    return await this.groqClient.completeJson({
+    const request = {
       ...prompts,
       model: this.config.model,
       timeout: this.config.timeout,
       maxTokens,
       responseFormat: OfferAnalysisJsonSchema.createResponseFormat(),
-    });
+    };
+    if (LOW_REASONING_MODELS.has(this.config.model)) {
+      request.reasoningEffort = LOW_REASONING_EFFORT;
+    }
+    return await this.groqClient.completeJson(request);
   }
 
   /**

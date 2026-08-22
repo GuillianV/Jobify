@@ -12,6 +12,7 @@ const TOKEN_BUDGET_REQUESTED_LABEL_PATTERN = /\bRequested\b/gu;
 const TOKEN_BUDGET_PATTERN = /\bLimit\s+(\d+)(?![\d.]),\s*Requested\s+(\d+)(?![\d.])/gu;
 const DEFAULT_RESPONSE_FORMAT = Object.freeze({ type: "json_object" });
 const JSON_SCHEMA_RESPONSE_FORMAT_KEY_COUNT = 2;
+const REASONING_EFFORTS = new Set(["low", "medium", "high"]);
 
 /**
  * Performs one provider-agnostic JSON chat completion through Groq transport.
@@ -52,6 +53,7 @@ class GroqJsonClient {
    * @param {number} request.timeout - Positive timeout in milliseconds.
    * @param {number} request.maxTokens - Positive output token limit.
    * @param {object} [request.responseFormat] - Optional supported response format override.
+   * @param {string} [request.reasoningEffort] - Optional closed Groq reasoning effort.
    * @returns {Promise<unknown>} Parsed JSON content without business validation.
    */
   async completeJson({
@@ -61,13 +63,15 @@ class GroqJsonClient {
     timeout,
     maxTokens,
     responseFormat = DEFAULT_RESPONSE_FORMAT,
+    reasoningEffort,
   }) {
     this.validateRequest(systemPrompt, userPrompt, model, timeout, maxTokens);
     const safeResponseFormat = this.validateResponseFormat(responseFormat);
+    this.validateReasoningEffort(reasoningEffort);
     if (!this.apiKey) {
       throw new GroqJsonClientError(GroqJsonClientError.CODE.UNAVAILABLE);
     }
-    const requestBody = JSON.stringify({
+    const requestPayload = {
       model,
       temperature: GroqConstants.TEMPERATURE,
       max_tokens: maxTokens,
@@ -76,7 +80,11 @@ class GroqJsonClient {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-    });
+    };
+    if (reasoningEffort !== undefined) {
+      requestPayload.reasoning_effort = reasoningEffort;
+    }
+    const requestBody = JSON.stringify(requestPayload);
     const controller = new AbortController();
     let timedOut = false;
     const timer = this.setTimeoutImpl(() => {
@@ -174,6 +182,17 @@ class GroqJsonClient {
     }
     if (!Number.isFinite(maxTokens) || maxTokens <= 0) {
       throw new TypeError("Groq maxTokens must be positive");
+    }
+  }
+
+  /**
+   * Validate one optional closed Groq reasoning effort before network access.
+   * @param {unknown} reasoningEffort - Optional reasoning effort candidate.
+   * @returns {void}
+   */
+  validateReasoningEffort(reasoningEffort) {
+    if (reasoningEffort !== undefined && !REASONING_EFFORTS.has(reasoningEffort)) {
+      throw new TypeError("Groq reasoningEffort is unsupported");
     }
   }
 

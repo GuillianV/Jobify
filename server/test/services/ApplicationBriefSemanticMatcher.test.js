@@ -51,6 +51,7 @@ test("matcher sends only serialized projection with injected provider settings",
   assert.equal(requests[0].timeout, ApplicationBriefMatcherConstants.TIMEOUT_MS);
   assert.equal(requests[0].maxTokens, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS);
   assert.equal(Object.hasOwn(requests[0], "responseFormat"), false);
+  assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), false);
   assert.equal(requests[0].userPrompt.endsWith(JSON.stringify(projection)), true);
   assert.equal(requests[0].userPrompt.includes("offerIdentity"), false);
   assert.equal(requests[0].userPrompt.includes("fingerprint"), false);

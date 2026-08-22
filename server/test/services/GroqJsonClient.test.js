@@ -23,6 +23,7 @@ const TOKEN_LIMIT = 12000;
 const TOKEN_REQUESTED = 12047;
 const UNSAFE_PROVIDER_METADATA_LENGTH = 81;
 const UNSAFE_PROVIDER_METADATA_NUMBER = 42;
+const REASONING_EFFORTS = ["low", "medium", "high"];
 
 /**
  * Build one successful fetch response containing serialized message JSON.
@@ -136,6 +137,7 @@ test("request uses strict Groq JSON mode and returns parsed values", async () =>
       { role: "user", content: USER_PROMPT },
     ],
   });
+  assert.equal(Object.hasOwn(JSON.parse(capturedOptions.body), "reasoning_effort"), false);
   assert.equal(clearedTimer, TIMER_ID);
 
   const arrayClient = new GroqJsonClient({
@@ -153,6 +155,51 @@ test("request uses strict Groq JSON mode and returns parsed values", async () =>
     },
   });
   assert.equal(await primitiveClient.completeJson(createRequest()), "hello");
+});
+
+test("request maps only closed opt-in reasoning efforts", async () => {
+  const bodies = [];
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async (endpoint, options) => {
+      bodies.push(JSON.parse(options.body));
+      return createResponse({ valid: true });
+    },
+  });
+
+  for (const reasoningEffort of REASONING_EFFORTS) {
+    await client.completeJson({ ...createRequest(), reasoningEffort });
+  }
+  assert.deepEqual(bodies.map((body) => {
+    return body.reasoning_effort;
+  }), REASONING_EFFORTS);
+  assert.deepEqual(bodies[0], {
+    model: MODEL,
+    temperature: GroqConstants.TEMPERATURE,
+    max_tokens: MAX_TOKENS,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: USER_PROMPT },
+    ],
+    reasoning_effort: "low",
+  });
+
+  let calls = 0;
+  const rejectingClient = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      calls += 1;
+      return createResponse({ valid: true });
+    },
+  });
+  for (const reasoningEffort of ["", "LOW", "minimal", {}, [], 1]) {
+    await assert.rejects(
+      rejectingClient.completeJson({ ...createRequest(), reasoningEffort }),
+      TypeError,
+    );
+  }
+  assert.equal(calls, 0);
 });
 
 test("request accepts one detached strict JSON Schema response format", async () => {
