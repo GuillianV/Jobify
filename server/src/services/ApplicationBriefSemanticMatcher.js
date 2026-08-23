@@ -1,6 +1,12 @@
 import { ApplicationBriefMatcherConstants } from "../constants/ApplicationBriefMatcherConstants.js";
+import { ApplicationBriefSemanticJsonSchema } from "../constants/ApplicationBriefSemanticJsonSchema.js";
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
 import { ApplicationBriefMatcherError } from "./ApplicationBriefMatcherError.js";
+
+const STRICT_STRUCTURED_OUTPUT_MODELS = new Set([
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+]);
 
 /**
  * Performs one bounded LLM semantic match over a minimal projected input.
@@ -87,12 +93,16 @@ class ApplicationBriefSemanticMatcher {
    * @returns {Promise<unknown>} Parsed provider JSON.
    */
   async complete(prompts, maxTokens) {
-    return await this.groqClient.completeJson({
+    const request = {
       ...prompts,
       model: this.config.model,
       timeout: this.config.timeout,
       maxTokens,
-    });
+    };
+    if (STRICT_STRUCTURED_OUTPUT_MODELS.has(this.config.model)) {
+      request.responseFormat = ApplicationBriefSemanticJsonSchema.createResponseFormat();
+    }
+    return await this.groqClient.completeJson(request);
   }
 
   /**

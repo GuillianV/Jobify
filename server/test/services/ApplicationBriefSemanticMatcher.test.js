@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApplicationBriefMatcherConstants } from "../../src/constants/ApplicationBriefMatcherConstants.js";
+import { ApplicationBriefSemanticJsonSchema } from "../../src/constants/ApplicationBriefSemanticJsonSchema.js";
 import { ApplicationBriefMatcherError } from "../../src/services/ApplicationBriefMatcherError.js";
 import { ApplicationBriefPrompt } from "../../src/services/ApplicationBriefPrompt.js";
 import { ApplicationBriefSemanticMatcher } from "../../src/services/ApplicationBriefSemanticMatcher.js";
@@ -8,6 +9,9 @@ import { ApplicationBriefSemanticOutputValidator } from "../../src/services/Appl
 import { GroqJsonClientError } from "../../src/services/GroqJsonClientError.js";
 
 const MODEL = "matcher-model";
+const GPT_OSS_120B_MODEL = "openai/gpt-oss-120b";
+const GPT_OSS_20B_MODEL = "openai/gpt-oss-20b";
+const HISTORICAL_MODEL = "llama-3.3-70b-versatile";
 const MAXIMUM_TECHNICAL_ATTEMPTS = 2;
 
 /**
@@ -57,6 +61,39 @@ test("matcher sends only serialized projection with injected provider settings",
   assert.equal(requests[0].userPrompt.includes("fingerprint"), false);
 });
 
+test("known GPT-OSS models use strict semantic schema without reasoning", async () => {
+  for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
+    const requests = [];
+    const matcher = createMatcher(async (request) => {
+      requests.push(structuredClone(request));
+      return createOutput();
+    }, ApplicationBriefSemanticMatcher.buildConfig(model));
+    await matcher.match({ offer: {}, candidate: {} });
+
+    assert.equal(requests.length, 1);
+    assert.deepEqual(
+      requests[0].responseFormat,
+      ApplicationBriefSemanticJsonSchema.createResponseFormat(),
+    );
+    assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), false);
+    assert.equal(requests[0].maxTokens, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS);
+  }
+});
+
+test("unsupported model preserves the historical matcher request", async () => {
+  const requests = [];
+  const matcher = createMatcher(async (request) => {
+    requests.push(structuredClone(request));
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(HISTORICAL_MODEL));
+  await matcher.match({ offer: {}, candidate: {} });
+
+  assert.equal(requests.length, 1);
+  assert.equal(Object.hasOwn(requests[0], "responseFormat"), false);
+  assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), false);
+  assert.equal(requests[0].maxTokens, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS);
+});
+
 test("input character budget accepts the exact limit and fails above without a call", async () => {
   const emptySerializedLength = JSON.stringify({ value: "" }).length;
   const exactProjection = {
@@ -96,6 +133,33 @@ test("invalid semantic output fails once without semantic retry", async () => {
   assert.equal(calls, 1);
 });
 
+test("strict transport output still passes through authoritative business validation", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    return {
+      requirementMatches: [{
+        offerRef: { kind: "REQUIREMENT", index: 0 },
+        state: "SUPPORTED",
+        supportedFacets: [],
+        notEvidencedFacets: [],
+      }],
+      emphasis: [],
+      supportedClaims: [],
+      cautions: [],
+    };
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
+    assert.equal(
+      error.safeDetails.validationSubcode,
+      ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE.STATE_FACET_INVARIANT,
+    );
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
 test("recognized provider failures map to the closed matcher taxonomy", async () => {
   const mappings = [
     [GroqJsonClientError.CODE.UNAVAILABLE, ApplicationBriefMatcherError.CODE.UNAVAILABLE, null],
@@ -121,7 +185,7 @@ test("recognized provider failures map to the closed matcher taxonomy", async ()
   }
 });
 
-test("one technical token retry reuses prompts with a lower ceiling and can succeed", async () => {
+test("one technical token retry preserves strict schema and can succeed", async () => {
   const requests = [];
   const matcher = createMatcher(async (request) => {
     requests.push(structuredClone(request));
@@ -132,7 +196,7 @@ test("one technical token retry reuses prompts with a lower ceiling and can succ
       });
     }
     return createOutput();
-  });
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
   const result = await matcher.match({ offer: {}, candidate: {} });
 
   assert.deepEqual(result, createOutput());
@@ -140,6 +204,34 @@ test("one technical token retry reuses prompts with a lower ceiling and can succ
   assert.equal(requests[1].systemPrompt, requests[0].systemPrompt);
   assert.equal(requests[1].userPrompt, requests[0].userPrompt);
   assert.equal(requests[1].maxTokens < requests[0].maxTokens, true);
+  assert.deepEqual(requests[1].responseFormat, requests[0].responseFormat);
+  assert.deepEqual(
+    requests[0].responseFormat,
+    ApplicationBriefSemanticJsonSchema.createResponseFormat(),
+  );
+  assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), false);
+  assert.equal(Object.hasOwn(requests[1], "reasoningEffort"), false);
+});
+
+test("unsupported model token retry keeps response format and reasoning absent", async () => {
+  const requests = [];
+  const matcher = createMatcher(async (request) => {
+    requests.push(structuredClone(request));
+    if (requests.length === 1) {
+      throw new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
+        limitTokens: 10000,
+        requestedTokens: 11000,
+      });
+    }
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(HISTORICAL_MODEL));
+  await matcher.match({ offer: {}, candidate: {} });
+
+  assert.equal(requests.length, MAXIMUM_TECHNICAL_ATTEMPTS);
+  for (const request of requests) {
+    assert.equal(Object.hasOwn(request, "responseFormat"), false);
+    assert.equal(Object.hasOwn(request, "reasoningEffort"), false);
+  }
 });
 
 test("token retry never performs a third call and unsafe budgets stop immediately", async () => {
