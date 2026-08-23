@@ -7,6 +7,7 @@ const STRICT_STRUCTURED_OUTPUT_MODELS = new Set([
   "openai/gpt-oss-120b",
   "openai/gpt-oss-20b",
 ]);
+const LOW_REASONING_EFFORT = "low";
 
 /**
  * Performs one bounded LLM semantic match over a minimal projected input.
@@ -101,6 +102,7 @@ class ApplicationBriefSemanticMatcher {
     };
     if (STRICT_STRUCTURED_OUTPUT_MODELS.has(this.config.model)) {
       request.responseFormat = ApplicationBriefSemanticJsonSchema.createResponseFormat();
+      request.reasoningEffort = LOW_REASONING_EFFORT;
     }
     return await this.groqClient.completeJson(request);
   }

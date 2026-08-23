@@ -13,6 +13,8 @@ const GPT_OSS_120B_MODEL = "openai/gpt-oss-120b";
 const GPT_OSS_20B_MODEL = "openai/gpt-oss-20b";
 const HISTORICAL_MODEL = "llama-3.3-70b-versatile";
 const MAXIMUM_TECHNICAL_ATTEMPTS = 2;
+const EXPECTED_RETRY_MAX_TOKENS = 3095;
+const HTTP_BAD_REQUEST = 400;
 
 /**
  * Build one valid empty semantic output.
@@ -61,7 +63,7 @@ test("matcher sends only serialized projection with injected provider settings",
   assert.equal(requests[0].userPrompt.includes("fingerprint"), false);
 });
 
-test("known GPT-OSS models use strict semantic schema without reasoning", async () => {
+test("known GPT-OSS models compose strict semantic schema with low reasoning", async () => {
   for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
     const requests = [];
     const matcher = createMatcher(async (request) => {
@@ -75,7 +77,8 @@ test("known GPT-OSS models use strict semantic schema without reasoning", async 
       requests[0].responseFormat,
       ApplicationBriefSemanticJsonSchema.createResponseFormat(),
     );
-    assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), false);
+    assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), true);
+    assert.equal(requests[0].reasoningEffort, "low");
     assert.equal(requests[0].maxTokens, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS);
   }
 });
@@ -185,32 +188,53 @@ test("recognized provider failures map to the closed matcher taxonomy", async ()
   }
 });
 
-test("one technical token retry preserves strict schema and can succeed", async () => {
-  const requests = [];
-  const matcher = createMatcher(async (request) => {
-    requests.push(structuredClone(request));
-    if (requests.length === 1) {
-      throw new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
-        limitTokens: 10000,
-        requestedTokens: 11000,
-      });
-    }
-    return createOutput();
+test("HTTP 400 provider errors are mapped once without retry", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    throw new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
+      status: HTTP_BAD_REQUEST,
+      providerType: "invalid_request_error",
+      providerCode: "json_validate_failed",
+    });
   }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
-  const result = await matcher.match({ offer: {}, candidate: {} });
 
-  assert.deepEqual(result, createOutput());
-  assert.equal(requests.length, MAXIMUM_TECHNICAL_ATTEMPTS);
-  assert.equal(requests[1].systemPrompt, requests[0].systemPrompt);
-  assert.equal(requests[1].userPrompt, requests[0].userPrompt);
-  assert.equal(requests[1].maxTokens < requests[0].maxTokens, true);
-  assert.deepEqual(requests[1].responseFormat, requests[0].responseFormat);
-  assert.deepEqual(
-    requests[0].responseFormat,
-    ApplicationBriefSemanticJsonSchema.createResponseFormat(),
-  );
-  assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), false);
-  assert.equal(Object.hasOwn(requests[1], "reasoningEffort"), false);
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.PROVIDER_ERROR);
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
+test("one technical token retry preserves strict schema and low reasoning", async () => {
+  for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
+    const requests = [];
+    const matcher = createMatcher(async (request) => {
+      requests.push(structuredClone(request));
+      if (requests.length === 1) {
+        throw new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
+          limitTokens: 10000,
+          requestedTokens: 11000,
+        });
+      }
+      return createOutput();
+    }, ApplicationBriefSemanticMatcher.buildConfig(model));
+    const result = await matcher.match({ offer: {}, candidate: {} });
+
+    assert.deepEqual(result, createOutput());
+    assert.equal(requests.length, MAXIMUM_TECHNICAL_ATTEMPTS);
+    assert.equal(requests[1].systemPrompt, requests[0].systemPrompt);
+    assert.equal(requests[1].userPrompt, requests[0].userPrompt);
+    assert.equal(requests[0].maxTokens, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS);
+    assert.equal(requests[1].maxTokens, EXPECTED_RETRY_MAX_TOKENS);
+    assert.deepEqual(requests[1].responseFormat, requests[0].responseFormat);
+    assert.deepEqual(
+      requests[0].responseFormat,
+      ApplicationBriefSemanticJsonSchema.createResponseFormat(),
+    );
+    assert.equal(requests[0].reasoningEffort, "low");
+    assert.equal(requests[1].reasoningEffort, "low");
+  }
 });
 
 test("unsupported model token retry keeps response format and reasoning absent", async () => {
