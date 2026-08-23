@@ -10,6 +10,8 @@ const REQUESTED_OFFER_ID = 42;
 const AUTHORITATIVE_OFFER_ID = 84;
 const SHA_256_HEX_LENGTH = 64;
 const SIGNING_SECRET_BYTES = 32;
+const HTTP_BAD_REQUEST = 400;
+const HTTP_SERVER_ERROR = 500;
 
 /**
  * Build one service harness with observable injected collaborators.
@@ -226,6 +228,116 @@ test("service logs only mapped contextual invalid-output reasons", async () => {
   }
 });
 
+test("service logs provider HTTP failures once with re-sanitized closed details", async () => {
+  const cases = [
+    [HTTP_BAD_REQUEST, "invalid_request_error", "invalid_json_schema"],
+    [HTTP_SERVER_ERROR, "server_error", "provider_failure"],
+  ];
+  for (const [status, providerType, providerCode] of cases) {
+    const cause = new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
+      status,
+      providerType,
+      providerCode,
+    });
+    const expected = new ApplicationBriefMatcherError(
+      ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+      null,
+      cause,
+    );
+    const causeSnapshot = structuredClone(cause.safeDetails);
+    const harness = createHarness({ builderError: expected });
+
+    await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+      return error === expected;
+    });
+    assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+      event: "application_brief_semantic_matcher_provider_error",
+      status,
+      providerType,
+      providerCode,
+    }]);
+    assert.deepEqual(cause.safeDetails, causeSnapshot);
+  }
+});
+
+test("service neutralizes malformed provider details and an absent typed cause", async () => {
+  const malformedCause = new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR);
+  malformedCause.safeDetails = {
+    status: "400",
+    providerType: "unsafe provider text",
+    providerCode: { private: true },
+  };
+  const errors = [
+    new ApplicationBriefMatcherError(
+      ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+      null,
+      malformedCause,
+    ),
+    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.PROVIDER_ERROR),
+  ];
+  for (const expected of errors) {
+    const harness = createHarness({ builderError: expected });
+    await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+      return error === expected;
+    });
+    assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+      event: "application_brief_semantic_matcher_provider_error",
+      status: null,
+      providerType: null,
+      providerCode: null,
+    }]);
+  }
+});
+
+test("service rejects safe-looking metadata from a non-Groq cause", async () => {
+  const fakeCause = new Error("synthetic non-provider cause");
+  fakeCause.safeDetails = {
+    status: HTTP_BAD_REQUEST,
+    providerType: "safe_looking_type",
+    providerCode: "safe_looking_code",
+  };
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+    null,
+    fakeCause,
+  );
+  const harness = createHarness({ builderError: expected });
+
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+    event: "application_brief_semantic_matcher_provider_error",
+    status: null,
+    providerType: null,
+    providerCode: null,
+  }]);
+});
+
+test("service rejects safe-looking metadata from a non-HTTP Groq error", async () => {
+  const cause = new GroqJsonClientError(GroqJsonClientError.CODE.INVALID_RESPONSE, {
+    status: HTTP_BAD_REQUEST,
+    providerType: "safe_looking_type",
+    providerCode: "safe_looking_code",
+  });
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+    null,
+    cause,
+  );
+  const harness = createHarness({ builderError: expected });
+
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+    event: "application_brief_semantic_matcher_provider_error",
+    status: null,
+    providerType: null,
+    providerCode: null,
+  }]);
+});
+
 test("service leaves non-invalid-output failures unlogged", async () => {
   const errors = [
     new ApplicationBriefContextValidationError(
@@ -235,8 +347,8 @@ test("service leaves non-invalid-output failures unlogged", async () => {
       ApplicationBriefContextValidationError.REASON.EVIDENCE_VALUE_MISMATCH,
     ),
     new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.RATE_LIMITED),
+    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.UNAVAILABLE),
     new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.TIMEOUT),
-    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.PROVIDER_ERROR),
     new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET),
   ];
   for (const expected of errors) {
@@ -254,6 +366,26 @@ test("logger failure never masks terminal invalid output", async () => {
     ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
     null,
     { validationCode: "SEMANTIC_VALIDATION", validationSubcode: "TYPE" },
+  );
+  const harness = createHarness({
+    builderError: expected,
+    loggerError: new Error("private logger failure"),
+  });
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.equal(harness.calls.logs.length, 1);
+});
+
+test("logger failure never masks terminal provider error", async () => {
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+    null,
+    new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
+      status: HTTP_BAD_REQUEST,
+      providerType: "invalid_request_error",
+      providerCode: "invalid_json_schema",
+    }),
   );
   const harness = createHarness({
     builderError: expected,

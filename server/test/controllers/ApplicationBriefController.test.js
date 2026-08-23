@@ -10,6 +10,7 @@ import { CandidateDossierServiceError } from "../../src/services/CandidateDossie
 import { OfferAnalysisServiceError } from "../../src/services/OfferAnalysisServiceError.js";
 import { OfferAnalyzerError } from "../../src/services/OfferAnalyzerError.js";
 import { OfferPreparationError } from "../../src/services/OfferPreparationError.js";
+import { GroqJsonClientError } from "../../src/services/GroqJsonClientError.js";
 
 const OFFER_ID = 42;
 
@@ -192,6 +193,27 @@ test("controller keeps matcher invalid-output diagnostics server-only", async ()
     statusCode: HttpStatus.BAD_GATEWAY,
     message: "Application brief provider returned an invalid response",
     metadata: { code: "INVALID_APPLICATION_BRIEF_OUTPUT" },
+  });
+  assert.deepEqual(Object.keys(harness.state.error.metadata), ["code"]);
+});
+
+test("controller keeps matcher provider diagnostics server-only", async () => {
+  const cause = new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
+    status: HttpStatus.BAD_REQUEST,
+    providerType: "invalid_request_error",
+    providerCode: "invalid_json_schema",
+  });
+  const error = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+    null,
+    cause,
+  );
+  const harness = createHarness({ error });
+  await harness.controller.generateForOffer({ params: { id: String(OFFER_ID) } }, {});
+  assert.deepEqual(harness.state.error, {
+    statusCode: HttpStatus.BAD_GATEWAY,
+    message: "Application brief provider failed",
+    metadata: { code: "APPLICATION_BRIEF_PROVIDER_ERROR" },
   });
   assert.deepEqual(Object.keys(harness.state.error.metadata), ["code"]);
 });

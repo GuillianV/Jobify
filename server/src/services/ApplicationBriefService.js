@@ -3,6 +3,7 @@ import { ApplicationBriefMatcherError } from "./ApplicationBriefMatcherError.js"
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
 
 const INVALID_OUTPUT_DIAGNOSTIC_EVENT = "application_brief_semantic_matcher_invalid_output";
+const PROVIDER_ERROR_DIAGNOSTIC_EVENT = "application_brief_semantic_matcher_provider_error";
 const CONTEXTUAL_SUBCODES = new Set([
   ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE,
   ApplicationBriefContextValidationError.REASON.INVALID_OFFER_REFERENCE,
@@ -61,6 +62,7 @@ class ApplicationBriefService {
       });
     } catch (error) {
       this.logInvalidOutputDiagnostic(error);
+      this.logProviderErrorDiagnostic(error);
       throw error;
     }
     const brief = applicationBrief.toJson();
@@ -88,6 +90,47 @@ class ApplicationBriefService {
     } catch {
       return;
     }
+  }
+
+  /**
+   * Emit one terminal safe provider diagnostic without changing propagation.
+   * @param {unknown} error - Terminal builder failure.
+   * @returns {void}
+   */
+  logProviderErrorDiagnostic(error) {
+    if (!(error instanceof ApplicationBriefMatcherError)
+      || error.code !== ApplicationBriefMatcherError.CODE.PROVIDER_ERROR) {
+      return;
+    }
+    const details = this.resolveProviderErrorDetails(error);
+    try {
+      this.logger.warn(JSON.stringify({
+        event: PROVIDER_ERROR_DIAGNOSTIC_EVENT,
+        status: details.status,
+        providerType: details.providerType,
+        providerCode: details.providerCode,
+      }));
+    } catch {
+      return;
+    }
+  }
+
+  /**
+   * Re-sanitize one typed provider cause into the canonical closed HTTP shape.
+   * @param {ApplicationBriefMatcherError} error - Terminal provider failure.
+   * @returns {{status: number|null, providerType: string|null, providerCode: string|null}} Safe details.
+   */
+  resolveProviderErrorDetails(error) {
+    const cause = error.cause;
+    if (!(cause instanceof GroqJsonClientError)
+      || cause.code !== GroqJsonClientError.CODE.HTTP_ERROR) {
+      return GroqJsonClientError.createHttpSafeDetails();
+    }
+    return GroqJsonClientError.createHttpSafeDetails(
+      cause.safeDetails?.status,
+      cause.safeDetails?.providerType,
+      cause.safeDetails?.providerCode,
+    );
   }
 
   /**
