@@ -30,12 +30,29 @@ function createOutput() {
  * @param {object} [config] - Optional execution configuration.
  * @returns {ApplicationBriefSemanticMatcher} Matcher fixture.
  */
-function createMatcher(completeJson, config = ApplicationBriefSemanticMatcher.buildConfig(MODEL)) {
+function createMatcher(
+  completeJson,
+  config = ApplicationBriefSemanticMatcher.buildConfig(MODEL),
+  logger = { warn() {} },
+) {
   return new ApplicationBriefSemanticMatcher({
     promptBuilder: new ApplicationBriefPrompt(),
     groqClient: { completeJson },
     semanticValidator: new ApplicationBriefSemanticOutputValidator(),
     config,
+    logger,
+  });
+}
+
+/**
+ * Build the exact transient structured-output provider failure.
+ * @returns {GroqJsonClientError} Targeted safe provider error.
+ */
+function createJsonValidationError() {
+  return new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
+    status: HTTP_BAD_REQUEST,
+    providerType: "invalid_request_error",
+    providerCode: "json_validate_failed",
   });
 }
 
@@ -188,22 +205,108 @@ test("recognized provider failures map to the closed matcher taxonomy", async ()
   }
 });
 
-test("HTTP 400 provider errors are mapped once without retry", async () => {
+test("120B retries exact json validation failure once with an identical request", async () => {
+  const requests = [];
+  const logs = [];
+  const matcher = createMatcher(async (request) => {
+    requests.push(structuredClone(request));
+    if (requests.length === 1) {
+      throw createJsonValidationError();
+    }
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  assert.deepEqual(await matcher.match({ offer: {}, candidate: {} }), createOutput());
+  assert.equal(requests.length, MAXIMUM_TECHNICAL_ATTEMPTS);
+  assert.deepEqual(requests[1], requests[0]);
+  assert.deepEqual(logs.map(JSON.parse), [{
+    event: "application_brief_semantic_matcher_retry",
+    attempt: MAXIMUM_TECHNICAL_ATTEMPTS,
+    status: HTTP_BAD_REQUEST,
+    providerType: "invalid_request_error",
+    providerCode: "json_validate_failed",
+  }]);
+  assert.equal(logs[0].includes("systemPrompt"), false);
+  assert.equal(logs[0].includes("userPrompt"), false);
+});
+
+test("120B maps the second json validation failure without a third call", async () => {
   let calls = 0;
   const matcher = createMatcher(async () => {
     calls += 1;
-    throw new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
-      status: HTTP_BAD_REQUEST,
-      providerType: "invalid_request_error",
-      providerCode: "json_validate_failed",
-    });
+    throw createJsonValidationError();
   }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
 
   await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
     assert.equal(error.code, ApplicationBriefMatcherError.CODE.PROVIDER_ERROR);
     return true;
   });
-  assert.equal(calls, 1);
+  assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+});
+
+test("120B preserves the second rate-limit classification without a third call", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw createJsonValidationError();
+    }
+    throw new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED);
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.RATE_LIMITED);
+    return true;
+  });
+  assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+});
+
+test("json validation retry never turns a second token-budget failure into a third call", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw createJsonValidationError();
+    }
+    throw new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
+      limitTokens: 10000,
+      requestedTokens: 11000,
+    });
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET);
+    return true;
+  });
+  assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+});
+
+test("non-120B and non-target provider failures never use the targeted retry", async () => {
+  for (const [model, error] of [
+    [GPT_OSS_20B_MODEL, createJsonValidationError()],
+    [HISTORICAL_MODEL, createJsonValidationError()],
+    [GPT_OSS_120B_MODEL, new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED)],
+    [GPT_OSS_120B_MODEL, new GroqJsonClientError(GroqJsonClientError.CODE.TIMEOUT)],
+    [GPT_OSS_120B_MODEL, new GroqJsonClientError(GroqJsonClientError.CODE.UNAVAILABLE)],
+    [GPT_OSS_120B_MODEL, new GroqJsonClientError(GroqJsonClientError.CODE.INVALID_RESPONSE)],
+    [GPT_OSS_120B_MODEL, new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
+      status: HTTP_BAD_REQUEST,
+      providerType: "invalid_request_error",
+      providerCode: "another_code",
+    })],
+  ]) {
+    let calls = 0;
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      throw error;
+    }, ApplicationBriefSemanticMatcher.buildConfig(model));
+    await assert.rejects(matcher.match({ offer: {}, candidate: {} }));
+    assert.equal(calls, 1);
+  }
 });
 
 test("one technical token retry preserves strict schema and low reasoning", async () => {
@@ -269,6 +372,23 @@ test("token retry never performs a third call and unsafe budgets stop immediatel
   });
   await assert.rejects(retrying.match({ offer: {}, candidate: {} }), (error) => {
     assert.equal(error.code, ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET);
+    return true;
+  });
+  assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+
+  calls = 0;
+  const jsonAfterTokenRetry = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
+        limitTokens: 10000,
+        requestedTokens: 11000,
+      });
+    }
+    throw createJsonValidationError();
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+  await assert.rejects(jsonAfterTokenRetry.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.PROVIDER_ERROR);
     return true;
   });
   assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);

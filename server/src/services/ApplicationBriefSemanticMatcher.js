@@ -8,6 +8,7 @@ const STRICT_STRUCTURED_OUTPUT_MODELS = new Set([
   "openai/gpt-oss-20b",
 ]);
 const LOW_REASONING_EFFORT = "low";
+const JSON_VALIDATION_RETRY_EVENT = "application_brief_semantic_matcher_retry";
 
 /**
  * Performs one bounded LLM semantic match over a minimal projected input.
@@ -20,12 +21,14 @@ class ApplicationBriefSemanticMatcher {
    * @param {import("./GroqJsonClient.js").GroqJsonClient} dependencies.groqClient - JSON transport.
    * @param {import("./ApplicationBriefSemanticOutputValidator.js").ApplicationBriefSemanticOutputValidator} dependencies.semanticValidator - Semantic validator.
    * @param {object} dependencies.config - Matcher execution configuration.
+   * @param {{warn: (message: string) => void}} [dependencies.logger=console] - Safe diagnostic logger.
    */
-  constructor({ promptBuilder, groqClient, semanticValidator, config }) {
+  constructor({ promptBuilder, groqClient, semanticValidator, config, logger = console }) {
     this.promptBuilder = promptBuilder;
     this.groqClient = groqClient;
     this.semanticValidator = semanticValidator;
     this.config = Object.freeze({ ...config });
+    this.logger = logger;
   }
 
   /**
@@ -58,16 +61,20 @@ class ApplicationBriefSemanticMatcher {
       if (!(error instanceof GroqJsonClientError)) {
         throw error;
       }
-      if (error.code !== GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
+      let retryMaxTokens = initialMaxTokens;
+      if (this.isJsonValidationRetry(error)) {
+        this.logJsonValidationRetry(error);
+      } else if (error.code === GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
+        retryMaxTokens = this.calculateRetryMaxTokens(error, initialMaxTokens);
+        if (retryMaxTokens === null) {
+          throw new ApplicationBriefMatcherError(
+            ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET,
+            null,
+            error,
+          );
+        }
+      } else {
         throw this.mapGroqError(error);
-      }
-      const retryMaxTokens = this.calculateRetryMaxTokens(error, initialMaxTokens);
-      if (retryMaxTokens === null) {
-        throw new ApplicationBriefMatcherError(
-          ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET,
-          null,
-          error,
-        );
       }
       try {
         return await this.complete(prompts, retryMaxTokens);
@@ -75,15 +82,41 @@ class ApplicationBriefSemanticMatcher {
         if (!(retryError instanceof GroqJsonClientError)) {
           throw retryError;
         }
-        if (retryError.code === GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
-          throw new ApplicationBriefMatcherError(
-            ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET,
-            null,
-            retryError,
-          );
-        }
         throw this.mapGroqError(retryError);
       }
+    }
+  }
+
+  /**
+   * Identify the one transient provider validation failure eligible for an identical retry.
+   * @param {GroqJsonClientError} error - Typed transport failure.
+   * @returns {boolean} Whether one identical retry is allowed.
+   */
+  isJsonValidationRetry(error) {
+    const constants = ApplicationBriefMatcherConstants;
+    return this.config.model === constants.JSON_VALIDATION_RETRY_MODEL
+      && error.code === GroqJsonClientError.CODE.HTTP_ERROR
+      && error.safeDetails.status === constants.JSON_VALIDATION_HTTP_STATUS
+      && error.safeDetails.providerType === constants.JSON_VALIDATION_PROVIDER_TYPE
+      && error.safeDetails.providerCode === constants.JSON_VALIDATION_PROVIDER_CODE;
+  }
+
+  /**
+   * Emit one closed diagnostic for a scheduled identical provider retry.
+   * @param {GroqJsonClientError} error - Targeted safe provider failure.
+   * @returns {void}
+   */
+  logJsonValidationRetry(error) {
+    try {
+      this.logger.warn(JSON.stringify({
+        event: JSON_VALIDATION_RETRY_EVENT,
+        attempt: ApplicationBriefMatcherConstants.RETRY_ATTEMPT,
+        status: error.safeDetails.status,
+        providerType: error.safeDetails.providerType,
+        providerCode: error.safeDetails.providerCode,
+      }));
+    } catch {
+      return;
     }
   }
 

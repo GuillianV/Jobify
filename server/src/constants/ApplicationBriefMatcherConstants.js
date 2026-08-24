@@ -12,6 +12,16 @@ class ApplicationBriefMatcherConstants {
 
   static TOKEN_BUDGET_SAFETY_MARGIN = 1;
 
+  static JSON_VALIDATION_RETRY_MODEL = "openai/gpt-oss-120b";
+
+  static JSON_VALIDATION_HTTP_STATUS = 400;
+
+  static JSON_VALIDATION_PROVIDER_TYPE = "invalid_request_error";
+
+  static JSON_VALIDATION_PROVIDER_CODE = "json_validate_failed";
+
+  static RETRY_ATTEMPT = 2;
+
   static TIMEOUT_MS = 30000;
 }
 
