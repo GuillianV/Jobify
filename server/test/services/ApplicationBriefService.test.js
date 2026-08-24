@@ -281,6 +281,45 @@ test("service logs only mapped contextual invalid-output reasons", async () => {
   }
 });
 
+test("service logs only closed invalid-evidence resolution diagnostics", async () => {
+  const cause = new ApplicationBriefContextValidationError(
+    ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE,
+    {
+      evidenceReferenceFailure: "INDEX_NOT_FOUND",
+      evidenceKind: "PROJECT",
+      evidenceFieldClass: "INDEXED",
+      itemId: "private-item",
+      field: "private-field",
+      index: 1,
+      value: "private-value",
+      providerOutput: "private-output",
+    },
+  );
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_CONTEXTUAL_OUTPUT,
+    cause,
+  );
+  const harness = createHarness({ builderError: expected });
+
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+    event: "application_brief_semantic_matcher_invalid_output",
+    validationCode: "CONTEXTUAL_VALIDATION",
+    validationSubcode: "INVALID_EVIDENCE_REFERENCE",
+    evidenceReferenceFailure: "INDEX_NOT_FOUND",
+    evidenceKind: "PROJECT",
+    evidenceFieldClass: "INDEXED",
+  }]);
+  for (const forbidden of [
+    "private-item", "private-field", "private-value", "private-output", "index",
+  ]) {
+    assert.equal(harness.calls.logs[0].includes(forbidden), false);
+  }
+});
+
 test("service logs provider HTTP failures once with re-sanitized closed details", async () => {
   const cases = [
     [HTTP_BAD_REQUEST, "invalid_request_error", "invalid_json_schema"],

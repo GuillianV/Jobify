@@ -215,10 +215,20 @@ class ApplicationBriefService {
       ? error.cause.reason
       : null;
     if (contextualSubcode !== null) {
-      return {
+      const details = {
         validationCode: codes.CONTEXTUAL_VALIDATION,
         validationSubcode: contextualSubcode,
       };
+      if (contextualSubcode
+        === ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE) {
+        Object.assign(
+          details,
+          ApplicationBriefContextValidationError.createEvidenceSafeDetails(
+            error.cause.safeDetails,
+          ),
+        );
+      }
+      return details;
     }
     return { validationCode: null, validationSubcode: null };
   }

@@ -171,6 +171,13 @@ test("hallucinated offer and evidence refs and invalid facets fail as contextual
       assert.equal(error instanceof ApplicationBriefMatcherError, true);
       assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
       assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_CONTEXTUAL_OUTPUT);
+      if (semanticOutput === badEvidence) {
+        assert.deepEqual(error.cause.safeDetails, {
+          evidenceReferenceFailure: "ITEM_NOT_FOUND_FOR_KIND",
+          evidenceKind: "EXPERIENCE",
+          evidenceFieldClass: "SCALAR",
+        });
+      }
       return true;
     });
   }

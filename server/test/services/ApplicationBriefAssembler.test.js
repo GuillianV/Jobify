@@ -4,6 +4,7 @@ import { ApplicationBriefConstants } from "../../src/constants/ApplicationBriefC
 import { ApplicationBriefLimits } from "../../src/constants/ApplicationBriefLimits.js";
 import { CandidateDossier } from "../../src/models/CandidateDossier.js";
 import { ApplicationBriefAssembler } from "../../src/services/ApplicationBriefAssembler.js";
+import { ApplicationBriefContextValidationError } from "../../src/services/ApplicationBriefContextValidationError.js";
 import { ApplicationBriefEvidenceResolver } from "../../src/services/ApplicationBriefEvidenceResolver.js";
 import { ApplicationBriefSemanticOutputValidator } from "../../src/services/ApplicationBriefSemanticOutputValidator.js";
 import { ApplicationBriefValidator } from "../../src/services/ApplicationBriefValidator.js";
@@ -142,4 +143,28 @@ test("assembled mutations cannot change semantic identity or candidate inputs", 
   assert.deepEqual(semanticOutput, semanticSnapshot);
   assert.deepEqual(OFFER_IDENTITY, identitySnapshot);
   assert.deepEqual(dossier.toJson(), dossierSnapshot);
+});
+
+test("assembly preserves closed resolver diagnostics without exposing the reference", () => {
+  const semanticOutput = new ApplicationBriefSemanticOutputValidator()
+    .validate(createSemanticOutput());
+  semanticOutput.requirementMatches[0].supportedFacets[0].evidenceRefs[0].itemId = "missing";
+
+  assert.throws(() => {
+    createAssembler().assemble({
+      semanticOutput, offerIdentity: OFFER_IDENTITY, candidateDossier: createDossier(),
+    });
+  }, (error) => {
+    assert.equal(error instanceof ApplicationBriefContextValidationError, true);
+    assert.equal(
+      error.reason,
+      ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE,
+    );
+    assert.deepEqual(error.safeDetails, {
+      evidenceReferenceFailure: "ITEM_NOT_FOUND_FOR_KIND",
+      evidenceKind: "PROJECT",
+      evidenceFieldClass: "INDEXED",
+    });
+    return true;
+  });
 });

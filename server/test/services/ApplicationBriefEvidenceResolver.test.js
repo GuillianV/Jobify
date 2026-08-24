@@ -38,15 +38,20 @@ function createDossier(current = false) {
 /**
  * Assert the closed invalid evidence reference reason.
  * @param {Function} action - Failing resolver call.
+ * @param {object} expectedDetails - Exact safe resolver diagnostics.
  * @returns {void}
  */
-function expectInvalidEvidenceRef(action) {
+function expectInvalidEvidenceRef(action, expectedDetails) {
   assert.throws(action, (error) => {
     assert.equal(error instanceof ApplicationBriefContextValidationError, true);
     assert.equal(
       error.reason,
       ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE,
     );
+    assert.deepEqual(error.safeDetails, expectedDetails);
+    for (const forbidden of ["itemId", "field", "index", "value", "reference"]) {
+      assert.equal(JSON.stringify(error.safeDetails).includes(forbidden), false);
+    }
     return true;
   });
 }
@@ -97,20 +102,78 @@ test("array fields resolve exact indexed values and reject absent indexes", () =
   );
   expectInvalidEvidenceRef(() => {
     resolver.resolve(dossier, { kind: "EXPERIENCE", itemId: "same-id", field: "activities[1]" });
+  }, {
+    evidenceReferenceFailure: "INDEX_NOT_FOUND",
+    evidenceKind: "EXPERIENCE",
+    evidenceFieldClass: "INDEXED",
   });
 });
 
-test("missing items and nullable fields fail closed", () => {
+test("missing items and nullable fields expose only closed resolver categories", () => {
   const dossier = createDossier();
   const resolver = new ApplicationBriefEvidenceResolver();
   expectInvalidEvidenceRef(() => {
     resolver.resolve(dossier, { kind: "SKILL", itemId: "missing", field: "value" });
+  }, {
+    evidenceReferenceFailure: "ITEM_NOT_FOUND_FOR_KIND",
+    evidenceKind: "SKILL",
+    evidenceFieldClass: "SCALAR",
   });
   expectInvalidEvidenceRef(() => {
     resolver.resolve(dossier, { kind: "EXPERIENCE", itemId: "same-id", field: "client" });
+  }, {
+    evidenceReferenceFailure: "FIELD_VALUE_NULL_OR_UNDEFINED",
+    evidenceKind: "EXPERIENCE",
+    evidenceFieldClass: "SCALAR",
   });
   expectInvalidEvidenceRef(() => {
     resolver.resolve(dossier, { kind: "PROJECT", itemId: "same-id", field: "role" });
+  }, {
+    evidenceReferenceFailure: "FIELD_VALUE_NULL_OR_UNDEFINED",
+    evidenceKind: "PROJECT",
+    evidenceFieldClass: "SCALAR",
+  });
+});
+
+test("absent scalar and unusable indexed collection remain distinct", () => {
+  const resolver = new ApplicationBriefEvidenceResolver();
+  const missingFieldValue = createDossier().toJson();
+  delete missingFieldValue.skills[0].detail;
+  expectInvalidEvidenceRef(() => {
+    resolver.resolve(
+      new CandidateDossier(missingFieldValue),
+      { kind: "SKILL", itemId: "skill-1", field: "detail" },
+    );
+  }, {
+    evidenceReferenceFailure: "FIELD_NOT_PRESENT",
+    evidenceKind: "SKILL",
+    evidenceFieldClass: "SCALAR",
+  });
+
+  const undefinedFieldValue = createDossier().toJson();
+  undefinedFieldValue.skills[0].detail = undefined;
+  expectInvalidEvidenceRef(() => {
+    resolver.resolve(
+      new CandidateDossier(undefinedFieldValue),
+      { kind: "SKILL", itemId: "skill-1", field: "detail" },
+    );
+  }, {
+    evidenceReferenceFailure: "FIELD_VALUE_NULL_OR_UNDEFINED",
+    evidenceKind: "SKILL",
+    evidenceFieldClass: "SCALAR",
+  });
+
+  const missingCollectionValue = createDossier().toJson();
+  missingCollectionValue.projects[0].activities = null;
+  expectInvalidEvidenceRef(() => {
+    resolver.resolve(
+      new CandidateDossier(missingCollectionValue),
+      { kind: "PROJECT", itemId: "same-id", field: "activities[0]" },
+    );
+  }, {
+    evidenceReferenceFailure: "INDEXED_COLLECTION_NOT_PRESENT",
+    evidenceKind: "PROJECT",
+    evidenceFieldClass: "INDEXED",
   });
 });
 

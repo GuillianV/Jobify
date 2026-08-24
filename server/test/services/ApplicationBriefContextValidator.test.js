@@ -416,9 +416,20 @@ test("invalid supported-facet evidence keeps the historical reference failure", 
   const brief = addGroundedPositiveFacet(createBrief(analysis, dossier));
   brief.requirementMatches[0].supportedFacets[0].evidenceRefs[0].itemId = "missing";
   brief.evidenceFacts[0].ref.itemId = "missing";
-  expectReason(() => {
+  assert.throws(() => {
     createValidator().validate(brief, createContext(analysis, dossier));
-  }, ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE);
+  }, (error) => {
+    assert.equal(
+      error.reason,
+      ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE,
+    );
+    assert.deepEqual(error.safeDetails, {
+      evidenceReferenceFailure: "ITEM_NOT_FOUND_FOR_KIND",
+      evidenceKind: "EXPERIENCE",
+      evidenceFieldClass: "SCALAR",
+    });
+    return true;
+  });
 });
 
 test("out-of-range OfferRefs fail in emphasis supported claims and cautions", () => {
