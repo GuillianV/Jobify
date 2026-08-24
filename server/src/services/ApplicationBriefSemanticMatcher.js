@@ -1,5 +1,4 @@
 import { ApplicationBriefMatcherConstants } from "../constants/ApplicationBriefMatcherConstants.js";
-import { ApplicationBriefSemanticJsonSchema } from "../constants/ApplicationBriefSemanticJsonSchema.js";
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
 import { ApplicationBriefMatcherError } from "./ApplicationBriefMatcherError.js";
 import { ApplicationBriefProviderDiagnostics } from "./ApplicationBriefProviderDiagnostics.js";
@@ -9,6 +8,7 @@ const STRICT_STRUCTURED_OUTPUT_MODELS = new Set([
   "openai/gpt-oss-20b",
 ]);
 const LOW_REASONING_EFFORT = "low";
+const JSON_OBJECT_RESPONSE_FORMAT = Object.freeze({ type: "json_object" });
 const JSON_VALIDATION_RETRY_EVENT = "application_brief_semantic_matcher_retry";
 const CROSS_CLASS_SKIP_EVENT = "application_brief_semantic_matcher_cross_class_skip";
 const PROVIDER_SUCCESS_EVENT = "application_brief_semantic_matcher_provider_success";
@@ -271,7 +271,7 @@ class ApplicationBriefSemanticMatcher {
       maxTokens,
     };
     if (STRICT_STRUCTURED_OUTPUT_MODELS.has(this.config.model)) {
-      request.responseFormat = ApplicationBriefSemanticJsonSchema.createResponseFormat();
+      request.responseFormat = JSON_OBJECT_RESPONSE_FORMAT;
       request.reasoningEffort = LOW_REASONING_EFFORT;
     }
     const output = await this.groqClient.completeJson(request);

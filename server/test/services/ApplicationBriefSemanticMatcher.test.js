@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApplicationBriefMatcherConstants } from "../../src/constants/ApplicationBriefMatcherConstants.js";
-import { ApplicationBriefSemanticJsonSchema } from "../../src/constants/ApplicationBriefSemanticJsonSchema.js";
 import { ApplicationBriefMatcherError } from "../../src/services/ApplicationBriefMatcherError.js";
 import { ApplicationBriefPrompt } from "../../src/services/ApplicationBriefPrompt.js";
 import { ApplicationBriefSemanticMatcher } from "../../src/services/ApplicationBriefSemanticMatcher.js";
@@ -12,6 +11,7 @@ const MODEL = "matcher-model";
 const GPT_OSS_120B_MODEL = "openai/gpt-oss-120b";
 const GPT_OSS_20B_MODEL = "openai/gpt-oss-20b";
 const HISTORICAL_MODEL = "llama-3.3-70b-versatile";
+const JSON_OBJECT_RESPONSE_FORMAT = Object.freeze({ type: "json_object" });
 const MAXIMUM_TECHNICAL_ATTEMPTS = 2;
 const MAXIMUM_CROSS_CLASS_ATTEMPTS = 3;
 const EXPECTED_RETRY_MAX_TOKENS = 3095;
@@ -142,7 +142,7 @@ test("matcher sends only serialized projection with injected provider settings",
   assert.equal(requests[0].userPrompt.includes("fingerprint"), false);
 });
 
-test("known GPT-OSS models compose strict semantic schema with low reasoning", async () => {
+test("known GPT-OSS models use json object with otherwise unchanged settings", async () => {
   for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
     const requests = [];
     const matcher = createMatcher(async (request) => {
@@ -152,10 +152,7 @@ test("known GPT-OSS models compose strict semantic schema with low reasoning", a
     await matcher.match({ offer: {}, candidate: {} });
 
     assert.equal(requests.length, 1);
-    assert.deepEqual(
-      requests[0].responseFormat,
-      ApplicationBriefSemanticJsonSchema.createResponseFormat(),
-    );
+    assert.deepEqual(requests[0].responseFormat, JSON_OBJECT_RESPONSE_FORMAT);
     assert.equal(Object.hasOwn(requests[0], "reasoningEffort"), true);
     assert.equal(requests[0].reasoningEffort, "low");
     assert.equal(requests[0].maxTokens, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS);
@@ -226,7 +223,7 @@ test("invalid semantic output fails once without semantic retry", async () => {
   )]);
 });
 
-test("strict transport output still passes through authoritative business validation", async () => {
+test("json object transport output still passes through authoritative business validation", async () => {
   let calls = 0;
   const matcher = createMatcher(async () => {
     calls += 1;
@@ -251,6 +248,50 @@ test("strict transport output still passes through authoritative business valida
     return true;
   });
   assert.equal(calls, 1);
+});
+
+test("json object contract violations are rejected locally without retry", async () => {
+  const unknownEnum = createOutput();
+  unknownEnum.requirementMatches = [{
+    offerRef: { kind: "REQUIREMENT", index: 0 },
+    state: "UNKNOWN",
+    supportedFacets: [],
+    notEvidencedFacets: [{ text: "Requirement" }],
+  }];
+  const missingRootKey = createOutput();
+  delete missingRootKey.cautions;
+  const unknownRootKey = { ...createOutput(), unknown: true };
+  const cases = [
+    [unknownEnum, ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE.ENUM],
+    [missingRootKey, ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE.ROOT_SHAPE_OR_KEYS],
+    [unknownRootKey, ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE.ROOT_SHAPE_OR_KEYS],
+  ];
+
+  for (const [output, validationSubcode] of cases) {
+    let calls = 0;
+    const logs = [];
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      return output;
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+      warn(value) {
+        logs.push(value);
+      },
+    });
+
+    await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+      assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
+      assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT);
+      assert.equal(error.safeDetails.validationSubcode, validationSubcode);
+      return true;
+    });
+    assert.equal(calls, 1);
+    assert.deepEqual(logs.map(JSON.parse), [createProviderSuccessEvent(
+      1,
+      ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+      output,
+    )]);
+  }
 });
 
 test("recognized provider failures map to the closed matcher taxonomy", async () => {
@@ -476,7 +517,7 @@ test("non-120B and non-target provider failures never use the targeted retry", a
   }
 });
 
-test("one technical token retry preserves strict schema and low reasoning", async () => {
+test("one technical token retry preserves json object and low reasoning", async () => {
   for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
     const requests = [];
     const logs = [];
@@ -505,10 +546,7 @@ test("one technical token retry preserves strict schema and low reasoning", asyn
     assert.equal(requests[0].maxTokens, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS);
     assert.equal(requests[1].maxTokens, EXPECTED_RETRY_MAX_TOKENS);
     assert.deepEqual(requests[1].responseFormat, requests[0].responseFormat);
-    assert.deepEqual(
-      requests[0].responseFormat,
-      ApplicationBriefSemanticJsonSchema.createResponseFormat(),
-    );
+    assert.deepEqual(requests[0].responseFormat, JSON_OBJECT_RESPONSE_FORMAT);
     assert.equal(requests[0].reasoningEffort, "low");
     assert.equal(requests[1].reasoningEffort, "low");
     assert.deepEqual(logs.map(JSON.parse), [{
