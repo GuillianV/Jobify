@@ -20,6 +20,8 @@ class ApplicationBriefMatcherConstants {
 
   static TOKEN_BUDGET_RETRY_REASON = "TOKEN_BUDGET_413";
 
+  static CROSS_CLASS_RETRY_REASON = "JSON_VALIDATE_FAILED_AFTER_TOKEN_BUDGET_413";
+
   static JSON_VALIDATION_RETRY_MODEL = "openai/gpt-oss-120b";
 
   static JSON_VALIDATION_HTTP_STATUS = 400;
@@ -29,6 +31,8 @@ class ApplicationBriefMatcherConstants {
   static JSON_VALIDATION_PROVIDER_CODE = "json_validate_failed";
 
   static RETRY_ATTEMPT = 2;
+
+  static FINAL_CROSS_CLASS_RETRY_ATTEMPT = 3;
 
   static TIMEOUT_MS = 30000;
 }

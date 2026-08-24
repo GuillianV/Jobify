@@ -15,5 +15,11 @@ test("matcher policy and bounded execution constants are exact", () => {
     "rate_limit_exceeded",
   );
   assert.equal(ApplicationBriefMatcherConstants.TOKEN_BUDGET_RETRY_REASON, "TOKEN_BUDGET_413");
+  assert.equal(
+    ApplicationBriefMatcherConstants.CROSS_CLASS_RETRY_REASON,
+    "JSON_VALIDATE_FAILED_AFTER_TOKEN_BUDGET_413",
+  );
+  assert.equal(ApplicationBriefMatcherConstants.RETRY_ATTEMPT, 2);
+  assert.equal(ApplicationBriefMatcherConstants.FINAL_CROSS_CLASS_RETRY_ATTEMPT, 3);
   assert.equal(ApplicationBriefMatcherConstants.TIMEOUT_MS, 30000);
 });

@@ -62,6 +62,7 @@ class ApplicationBriefSemanticMatcher {
         throw error;
       }
       let retryMaxTokens = initialMaxTokens;
+      let tokenBudgetRetry = false;
       if (this.isJsonValidationRetry(error)) {
         this.logJsonValidationRetry(error);
       } else if (error.code === GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
@@ -74,6 +75,7 @@ class ApplicationBriefSemanticMatcher {
           );
         }
         this.logTokenBudgetRetry(error, retryMaxTokens);
+        tokenBudgetRetry = true;
       } else {
         throw this.mapGroqError(error);
       }
@@ -82,6 +84,10 @@ class ApplicationBriefSemanticMatcher {
       } catch (retryError) {
         if (!(retryError instanceof GroqJsonClientError)) {
           throw retryError;
+        }
+        if (tokenBudgetRetry && this.isJsonValidationRetry(retryError)) {
+          this.logCrossClassRetry(retryError, retryMaxTokens);
+          return await this.requestFinalCrossClassOutput(prompts, retryMaxTokens);
         }
         throw this.mapGroqError(retryError);
       }
@@ -143,6 +149,46 @@ class ApplicationBriefSemanticMatcher {
       }));
     } catch {
       return;
+    }
+  }
+
+  /**
+   * Emit one closed diagnostic for the final JSON recovery after a token-budget retry.
+   * @param {GroqJsonClientError} error - Targeted second-attempt provider failure.
+   * @param {number} nextMaxTokens - Reused reduced output ceiling.
+   * @returns {void}
+   */
+  logCrossClassRetry(error, nextMaxTokens) {
+    const constants = ApplicationBriefMatcherConstants;
+    try {
+      this.logger.warn(JSON.stringify({
+        event: JSON_VALIDATION_RETRY_EVENT,
+        nextAttempt: constants.FINAL_CROSS_CLASS_RETRY_ATTEMPT,
+        retryReason: constants.CROSS_CLASS_RETRY_REASON,
+        status: error.safeDetails.status,
+        providerType: error.safeDetails.providerType,
+        providerCode: error.safeDetails.providerCode,
+        nextMaxTokens,
+      }));
+    } catch {
+      return;
+    }
+  }
+
+  /**
+   * Perform the single final cross-class call and preserve its terminal classification.
+   * @param {{systemPrompt: string, userPrompt: string}} prompts - Exact prompts.
+   * @param {number} maxTokens - Existing reduced output ceiling.
+   * @returns {Promise<unknown>} Parsed untrusted provider JSON.
+   */
+  async requestFinalCrossClassOutput(prompts, maxTokens) {
+    try {
+      return await this.complete(prompts, maxTokens);
+    } catch (error) {
+      if (!(error instanceof GroqJsonClientError)) {
+        throw error;
+      }
+      throw this.mapGroqError(error);
     }
   }
 
