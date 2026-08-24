@@ -55,14 +55,20 @@ const EXPECTED_RATE_LIMIT_DETAILS = Object.freeze({
 /**
  * Build one successful fetch response containing serialized message JSON.
  * @param {unknown} value - JSON value returned by the model.
+ * @param {object} [headers] - Optional response headers.
+ * @param {object} [envelope] - Optional unrelated provider envelope fields.
  * @returns {object} Fetch response double.
  */
-function createResponse(value) {
+function createResponse(value, headers = {}, envelope = {}) {
   return {
     ok: true,
     status: HTTP_OK,
+    headers: typeof headers.get === "function" ? headers : new Headers(headers),
     async json() {
-      return { choices: [{ message: { content: JSON.stringify(value) } }] };
+      return {
+        ...structuredClone(envelope),
+        choices: [{ message: { content: JSON.stringify(value) } }],
+      };
     },
   };
 }
@@ -183,6 +189,78 @@ test("request uses strict Groq JSON mode and returns parsed values", async () =>
     },
   });
   assert.equal(await primitiveClient.completeJson(createRequest()), "hello");
+});
+
+test("detailed success returns only parsed value and the complete typed rate metadata", async () => {
+  const expected = { valid: true };
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return createResponse(expected, {
+        ...RATE_LIMIT_HEADERS,
+        "x-private-header": "private-value",
+      }, {
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+        id: "private-request-id",
+      });
+    },
+  });
+
+  const result = await client.completeJsonWithMetadata(createRequest());
+
+  assert.deepEqual(result, {
+    value: expected,
+    safeRateLimitDetails: EXPECTED_RATE_LIMIT_DETAILS,
+  });
+  for (const forbidden of ["usage", "id", "headers", "x-private-header", "private-value"]) {
+    assert.equal(Object.hasOwn(result, forbidden), false, forbidden);
+    assert.equal(Object.hasOwn(result.safeRateLimitDetails, forbidden), false, forbidden);
+  }
+});
+
+test("detailed success omits unavailable malformed and unrelated metadata", async () => {
+  const cases = [
+    {
+      headers: {
+        "x-ratelimit-limit-tokens": "8000",
+        "x-ratelimit-remaining-tokens": "invalid",
+        "x-ratelimit-reset-tokens": "7.66s",
+        "x-unrelated": "42",
+      },
+      expected: { rateLimitTokenLimit: 8000, rateLimitTokenResetMs: 7660 },
+    },
+    { headers: {}, expected: {} },
+  ];
+  for (const item of cases) {
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return createResponse({ valid: true }, item.headers);
+      },
+    });
+
+    const result = await client.completeJsonWithMetadata(createRequest());
+
+    assert.deepEqual(result.safeRateLimitDetails, item.expected);
+  }
+});
+
+test("success metadata extraction failure is nonfatal and closed", async () => {
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return createResponse({ valid: true }, {
+        get() {
+          throw new Error("header failure");
+        },
+      });
+    },
+  });
+
+  assert.deepEqual(await client.completeJsonWithMetadata(createRequest()), {
+    value: { valid: true },
+    safeRateLimitDetails: {},
+  });
 });
 
 test("request maps only closed opt-in reasoning efforts", async () => {

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApplicationBriefLimits } from "../../src/constants/ApplicationBriefLimits.js";
+import { ApplicationBriefMatcherConstants } from "../../src/constants/ApplicationBriefMatcherConstants.js";
 import { CandidateDossier } from "../../src/models/CandidateDossier.js";
 import { OfferAnalysis } from "../../src/models/OfferAnalysis.js";
 import { ApplicationBrief } from "../../src/models/ApplicationBrief.js";
@@ -110,9 +111,15 @@ function createHarness(semanticOutput, overrides = {}) {
   const builder = new ApplicationBriefBuilder({
     inputProjector,
     semanticMatcher: {
-      async match(projection) {
+      async matchWithExecution(projection) {
         projections.push(structuredClone(projection));
-        return structuredClone(semanticOutput);
+        return {
+          semanticOutput: structuredClone(semanticOutput),
+          providerExecution: {
+            providerCallsMade: 1,
+            successfulMaxTokens: ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+          },
+        };
       },
     },
     assembler: overrides.assembler ?? assembler,
@@ -143,6 +150,8 @@ test("builder returns immutable final brief and sends only the minimal projectio
   assert.equal("inputIdentity" in harness.projections[0], false);
   assert.equal(brief.evidenceFacts[0].value, "React Engineer");
   const detached = brief.toJson();
+  assert.equal(Object.hasOwn(brief, "providerExecution"), false);
+  assert.equal(Object.hasOwn(detached, "providerExecution"), false);
   detached.requirementMatches[0].supportedFacets[0].text = "Changed";
   assert.equal(brief.requirementMatches[0].supportedFacets[0].text, "React");
 });
@@ -181,6 +190,26 @@ test("hallucinated offer and evidence refs and invalid facets fail as contextual
       return true;
     });
   }
+});
+
+test("incomplete coverage remains terminal without matcher regeneration", async () => {
+  const semanticOutput = createSemanticOutput();
+  semanticOutput.requirementMatches = [];
+  const harness = createHarness(semanticOutput);
+
+  await assert.rejects(harness.builder.build({
+    offerAnalysis: createAnalysis(), offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  }), (error) => {
+    assert.equal(error instanceof ApplicationBriefMatcherError, true);
+    assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_CONTEXTUAL_OUTPUT);
+    assert.equal(
+      error.cause?.reason,
+      ApplicationBriefContextValidationError.REASON.INCOMPLETE_REQUIREMENT_COVERAGE,
+    );
+    return true;
+  });
+  assert.equal(harness.projections.length, 1);
 });
 
 test("grounded support without a strategic claim fails as contextual model output", async () => {

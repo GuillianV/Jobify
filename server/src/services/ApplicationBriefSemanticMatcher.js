@@ -36,11 +36,21 @@ class ApplicationBriefSemanticMatcher {
   }
 
   /**
-   * Match one minimal projection and return detached strictly validated semantics.
+   * Match one minimal projection while preserving the historical semantic-only return value.
    * @param {object} projection - Exact ApplicationBriefInputProjector output.
    * @returns {Promise<object>} Validated semantic-only output.
    */
   async match(projection) {
+    const result = await this.matchWithExecution(projection);
+    return result.semanticOutput;
+  }
+
+  /**
+   * Match one projection and retain detached closed provider execution metadata.
+   * @param {object} projection - Exact ApplicationBriefInputProjector output.
+   * @returns {Promise<{semanticOutput: object, providerExecution: object}>} Validated output and execution metadata.
+   */
+  async matchWithExecution(projection) {
     const serializedInput = JSON.stringify(projection);
     if (serializedInput.length > this.config.maxInputCharacters) {
       throw new ApplicationBriefMatcherError(
@@ -48,19 +58,28 @@ class ApplicationBriefSemanticMatcher {
       );
     }
     const prompts = this.promptBuilder.build(projection);
-    const rawOutput = await this.requestSemanticOutput(prompts);
-    return this.semanticValidator.validate(rawOutput);
+    const result = await this.requestSemanticOutput(prompts);
+    const semanticOutput = this.semanticValidator.validate(result.rawOutput);
+    return {
+      semanticOutput,
+      providerExecution: {
+        providerCallsMade: result.providerCallsMade,
+        successfulMaxTokens: result.successfulMaxTokens,
+        ...result.safeRateLimitDetails,
+      },
+    };
   }
 
   /**
    * Perform the bounded completion sequence with one technical token retry only.
    * @param {{systemPrompt: string, userPrompt: string}} prompts - Exact prompts.
-   * @returns {Promise<unknown>} Parsed untrusted provider JSON.
+   * @returns {Promise<object>} Parsed JSON with closed execution metadata.
    */
   async requestSemanticOutput(prompts) {
     const initialMaxTokens = this.config.maxTokens;
+    const execution = { providerCallsMade: 0 };
     try {
-      return await this.complete(prompts, initialMaxTokens, INITIAL_ATTEMPT);
+      return await this.complete(prompts, initialMaxTokens, INITIAL_ATTEMPT, execution);
     } catch (error) {
       if (!(error instanceof GroqJsonClientError)) {
         throw error;
@@ -94,6 +113,7 @@ class ApplicationBriefSemanticMatcher {
           prompts,
           retryMaxTokens,
           ApplicationBriefMatcherConstants.RETRY_ATTEMPT,
+          execution,
         );
       } catch (retryError) {
         if (!(retryError instanceof GroqJsonClientError)) {
@@ -108,7 +128,7 @@ class ApplicationBriefSemanticMatcher {
             );
           }
           this.logCrossClassRetry(retryError, retryMaxTokens);
-          return await this.requestFinalCrossClassOutput(prompts, retryMaxTokens);
+          return await this.requestFinalCrossClassOutput(prompts, retryMaxTokens, execution);
         }
         throw this.mapGroqError(retryError);
       }
@@ -239,14 +259,16 @@ class ApplicationBriefSemanticMatcher {
    * Perform the single final cross-class call and preserve its terminal classification.
    * @param {{systemPrompt: string, userPrompt: string}} prompts - Exact prompts.
    * @param {number} maxTokens - Existing reduced output ceiling.
-   * @returns {Promise<unknown>} Parsed untrusted provider JSON.
+   * @param {object} execution - Mutable matcher-session call accounting.
+   * @returns {Promise<object>} Parsed JSON with closed execution metadata.
    */
-  async requestFinalCrossClassOutput(prompts, maxTokens) {
+  async requestFinalCrossClassOutput(prompts, maxTokens, execution) {
     try {
       return await this.complete(
         prompts,
         maxTokens,
         ApplicationBriefMatcherConstants.FINAL_CROSS_CLASS_RETRY_ATTEMPT,
+        execution,
       );
     } catch (error) {
       if (!(error instanceof GroqJsonClientError)) {
@@ -261,9 +283,10 @@ class ApplicationBriefSemanticMatcher {
    * @param {{systemPrompt: string, userPrompt: string}} prompts - Exact prompts.
    * @param {number} maxTokens - Attempt output ceiling.
    * @param {number} attempt - Exact provider attempt number.
-   * @returns {Promise<unknown>} Parsed provider JSON.
+   * @param {object} execution - Mutable matcher-session call accounting.
+   * @returns {Promise<object>} Parsed JSON with closed execution metadata.
    */
-  async complete(prompts, maxTokens, attempt) {
+  async complete(prompts, maxTokens, attempt, execution) {
     const request = {
       ...prompts,
       model: this.config.model,
@@ -274,9 +297,15 @@ class ApplicationBriefSemanticMatcher {
       request.responseFormat = JSON_OBJECT_RESPONSE_FORMAT;
       request.reasoningEffort = LOW_REASONING_EFFORT;
     }
-    const output = await this.groqClient.completeJson(request);
-    this.logProviderSuccess(output, attempt, maxTokens);
-    return output;
+    execution.providerCallsMade += 1;
+    const result = await this.groqClient.completeJsonWithMetadata(request);
+    this.logProviderSuccess(result.value, attempt, maxTokens);
+    return {
+      rawOutput: result.value,
+      providerCallsMade: execution.providerCallsMade,
+      successfulMaxTokens: maxTokens,
+      safeRateLimitDetails: { ...result.safeRateLimitDetails },
+    };
   }
 
   /**

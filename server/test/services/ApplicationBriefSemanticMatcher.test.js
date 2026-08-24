@@ -82,10 +82,18 @@ function createMatcher(
   completeJson,
   config = ApplicationBriefSemanticMatcher.buildConfig(MODEL),
   logger = { warn() {} },
+  safeRateLimitDetails = {},
 ) {
   return new ApplicationBriefSemanticMatcher({
     promptBuilder: new ApplicationBriefPrompt(),
-    groqClient: { completeJson },
+    groqClient: {
+      async completeJsonWithMetadata(request) {
+        return {
+          value: await completeJson(request),
+          safeRateLimitDetails: structuredClone(safeRateLimitDetails),
+        };
+      },
+    },
     semanticValidator: new ApplicationBriefSemanticOutputValidator(),
     config,
     logger,
@@ -141,6 +149,89 @@ test("matcher sends only serialized projection with injected provider settings",
   assert.equal(requests[0].userPrompt.endsWith(JSON.stringify(projection)), true);
   assert.equal(requests[0].userPrompt.includes("offerIdentity"), false);
   assert.equal(requests[0].userPrompt.includes("fingerprint"), false);
+});
+
+test("matcher detailed success retains one call actual budget and safe metadata", async () => {
+  const matcher = createMatcher(async () => {
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(MODEL), { warn() {} }, RATE_LIMIT_DETAILS_A);
+
+  const result = await matcher.matchWithExecution({ offer: {}, candidate: {} });
+
+  assert.deepEqual(result, {
+    semanticOutput: createOutput(),
+    providerExecution: {
+      providerCallsMade: 1,
+      successfulMaxTokens: ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+      ...RATE_LIMIT_DETAILS_A,
+    },
+  });
+});
+
+test("matcher detailed success retains reduced budget after recognized 413", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw createTokenBudgetError();
+    }
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+    warn() {},
+  }, RATE_LIMIT_DETAILS_B);
+
+  const result = await matcher.matchWithExecution({ offer: {}, candidate: {} });
+
+  assert.equal(result.providerExecution.providerCallsMade, MAXIMUM_TECHNICAL_ATTEMPTS);
+  assert.equal(result.providerExecution.successfulMaxTokens, EXPECTED_RETRY_MAX_TOKENS);
+  assert.deepEqual(
+    result.providerExecution,
+    {
+      providerCallsMade: MAXIMUM_TECHNICAL_ATTEMPTS,
+      successfulMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+      ...RATE_LIMIT_DETAILS_B,
+    },
+  );
+});
+
+test("matcher detailed success counts json validation retry at the actual budget", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw createJsonValidationError();
+    }
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+  const result = await matcher.matchWithExecution({ offer: {}, candidate: {} });
+
+  assert.deepEqual(result.providerExecution, {
+    providerCallsMade: MAXIMUM_TECHNICAL_ATTEMPTS,
+    successfulMaxTokens: ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+  });
+});
+
+test("matcher detailed success counts special Attempt 3 without resetting reduced budget", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw createTokenBudgetError();
+    }
+    if (calls === MAXIMUM_TECHNICAL_ATTEMPTS) {
+      throw createJsonValidationError();
+    }
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+  const result = await matcher.matchWithExecution({ offer: {}, candidate: {} });
+
+  assert.equal(calls, MAXIMUM_CROSS_CLASS_ATTEMPTS);
+  assert.deepEqual(result.providerExecution, {
+    providerCallsMade: MAXIMUM_CROSS_CLASS_ATTEMPTS,
+    successfulMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+  });
 });
 
 test("known GPT-OSS models use json object with otherwise unchanged settings", async () => {

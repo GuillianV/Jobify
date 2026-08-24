@@ -43,9 +43,9 @@ class ApplicationBriefBuilder {
       offerSnapshot,
       candidateDossier,
     });
-    const semanticOutput = await this.semanticMatcher.match(projection);
+    const matcherResult = await this.semanticMatcher.matchWithExecution(projection);
     const assembled = this.assembleSemanticOutput({
-      semanticOutput,
+      semanticOutput: matcherResult.semanticOutput,
       offerIdentity,
       candidateDossier,
     });

@@ -58,6 +58,18 @@ class GroqJsonClient {
    * @returns {Promise<unknown>} Parsed JSON content without business validation.
    */
   async completeJson({
+    ...request
+  }) {
+    const result = await this.completeJsonWithMetadata(request);
+    return result.value;
+  }
+
+  /**
+   * Request parsed JSON with one detached closed success-metadata envelope.
+   * @param {object} request - Completion input accepted by completeJson.
+   * @returns {Promise<{value: unknown, safeRateLimitDetails: object}>} Parsed value and safe metadata.
+   */
+  async completeJsonWithMetadata({
     systemPrompt,
     userPrompt,
     model,
@@ -103,7 +115,11 @@ class GroqJsonClient {
         signal: controller.signal,
       });
       await this.validateHttpResponse(response);
-      return await this.parseResponse(response);
+      const value = await this.parseResponse(response);
+      return {
+        value,
+        safeRateLimitDetails: this.extractSafeSuccessRateLimitDetails(response.headers),
+      };
     } catch (error) {
       if (error instanceof GroqJsonClientError) {
         throw error;
@@ -117,6 +133,23 @@ class GroqJsonClient {
       throw error;
     } finally {
       this.clearTimeoutImpl(timer);
+    }
+  }
+
+  /**
+   * Extract only available typed rate-limit metadata without affecting provider success.
+   * @param {Headers|object|null|undefined} headers - Successful response headers.
+   * @returns {object} Closed available safe metadata.
+   */
+  extractSafeSuccessRateLimitDetails(headers) {
+    try {
+      return Object.fromEntries(
+        Object.entries(GroqRateLimitMetadata.fromHeaders(headers)).filter(([, value]) => {
+          return Number.isSafeInteger(value) && value >= 0;
+        }),
+      );
+    } catch {
+      return {};
     }
   }
 
