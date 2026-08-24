@@ -124,6 +124,39 @@ function createContext(analysis, dossier, offerIdentity = createOfferIdentity())
 }
 
 /**
+ * Replace the first requirement with one grounded positive facet and its evidence fact.
+ * @param {object} brief - Mutable test brief.
+ * @param {string} [state] - Supported requirement state.
+ * @returns {object} The same test brief.
+ */
+function addGroundedPositiveFacet(brief, state = "SUPPORTED") {
+  const evidenceRef = {
+    kind: "EXPERIENCE", itemId: "experience-1", field: "role",
+  };
+  brief.requirementMatches[0] = {
+    offerRef: { kind: "REQUIREMENT", index: 0 }, state,
+    supportedFacets: [{ text: "React", evidenceRefs: [evidenceRef] }],
+    notEvidencedFacets: state === "PARTIALLY_SUPPORTED" ? [{ text: "5 ans" }] : [],
+  };
+  brief.evidenceFacts = [{ ref: evidenceRef, value: "React Engineer" }];
+  return brief;
+}
+
+/**
+ * Add one valid strategic claim for the grounded experience fixture.
+ * @param {object} brief - Mutable test brief.
+ * @returns {object} The same test brief.
+ */
+function addSupportedClaim(brief) {
+  brief.supportedClaims = [{
+    claimType: "EXPERIENCE_FACT",
+    offerRefs: [{ kind: "REQUIREMENT", index: 0 }],
+    evidenceRefs: [{ kind: "EXPERIENCE", itemId: "experience-1", field: "role" }],
+  }];
+  return brief;
+}
+
+/**
  * Assert one closed contextual validation reason.
  * @param {Function} action - Failing validation call.
  * @param {string} reason - Expected closed reason.
@@ -141,19 +174,7 @@ function expectReason(action, reason) {
 test("context validation accepts exact coverage identities facts and facets without mutation", () => {
   const analysis = createAnalysis();
   const dossier = createDossier();
-  const brief = createBrief(analysis, dossier);
-  brief.requirementMatches[0] = {
-    offerRef: { kind: "REQUIREMENT", index: 0 }, state: "SUPPORTED",
-    supportedFacets: [{
-      text: "React",
-      evidenceRefs: [{ kind: "EXPERIENCE", itemId: "experience-1", field: "role" }],
-    }],
-    notEvidencedFacets: [],
-  };
-  brief.evidenceFacts = [{
-    ref: { kind: "EXPERIENCE", itemId: "experience-1", field: "role" },
-    value: "React Engineer",
-  }];
+  const brief = addSupportedClaim(addGroundedPositiveFacet(createBrief(analysis, dossier)));
   const context = createContext(analysis, dossier);
   const briefSnapshot = structuredClone(brief);
   const analysisSnapshot = analysis.toJson();
@@ -221,18 +242,7 @@ test("every offer identity divergence and malformed authority is stale", () => {
 test("evidence facts require exact strings whitespace case and booleans", () => {
   const analysis = createAnalysis();
   const dossier = createDossier();
-  const base = createBrief(analysis, dossier);
-  base.requirementMatches[0] = {
-    offerRef: { kind: "REQUIREMENT", index: 0 }, state: "SUPPORTED",
-    supportedFacets: [{
-      text: "React",
-      evidenceRefs: [{ kind: "EXPERIENCE", itemId: "experience-1", field: "role" }],
-    }], notEvidencedFacets: [],
-  };
-  base.evidenceFacts = [{
-    ref: { kind: "EXPERIENCE", itemId: "experience-1", field: "role" },
-    value: "React Engineer",
-  }];
+  const base = addSupportedClaim(addGroundedPositiveFacet(createBrief(analysis, dossier)));
   assert.doesNotThrow(() => {
     createValidator().validate(base, createContext(analysis, dossier));
   });
@@ -345,6 +355,72 @@ test("empty candidate never causes automatic matching and missing coverage still
   });
 });
 
+test("grounded positive facets require one strategic supported claim without mutation", () => {
+  const analysis = createAnalysis();
+  const dossier = createDossier();
+  for (const state of ["SUPPORTED", "PARTIALLY_SUPPORTED"]) {
+    const brief = addGroundedPositiveFacet(createBrief(analysis, dossier), state);
+    const snapshot = structuredClone(brief);
+    expectReason(() => {
+      createValidator().validate(brief, createContext(analysis, dossier));
+    }, ApplicationBriefContextValidationError.REASON
+      .MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE);
+    assert.deepEqual(brief, snapshot);
+    assert.deepEqual(brief.supportedClaims, []);
+  }
+});
+
+test("multiple positive facets still require only one strategic supported claim", () => {
+  const analysis = createAnalysis();
+  const dossier = createDossier();
+  const missing = addGroundedPositiveFacet(createBrief(analysis, dossier));
+  missing.requirementMatches[0].supportedFacets.push({
+    text: "5 ans", evidenceRefs: [missing.evidenceFacts[0].ref],
+  });
+  expectReason(() => {
+    createValidator().validate(missing, createContext(analysis, dossier));
+  }, ApplicationBriefContextValidationError.REASON
+    .MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE);
+
+  const claimed = addSupportedClaim(structuredClone(missing));
+  assert.doesNotThrow(() => {
+    createValidator().validate(claimed, createContext(analysis, dossier));
+  });
+  assert.equal(claimed.supportedClaims.length, 1);
+});
+
+test("emphasis and cautions do not create grounded positive support", () => {
+  const analysis = createAnalysis();
+  const dossier = createDossier();
+  const brief = createBrief(analysis, dossier);
+  const evidenceRef = {
+    kind: "EXPERIENCE", itemId: "experience-1", field: "role",
+  };
+  brief.emphasis = [{
+    priority: "PRIMARY", offerRefs: [{ kind: "ACTIVITY", index: 0 }],
+    evidenceRefs: [evidenceRef], relevanceReason: "Relevant",
+  }];
+  brief.cautions = [{
+    kind: "DURATION_UNSUPPORTED",
+    offerRefs: [{ kind: "REQUIREMENT", index: 0 }], evidenceRefs: [evidenceRef],
+  }];
+  brief.evidenceFacts = [{ ref: evidenceRef, value: "React Engineer" }];
+  assert.doesNotThrow(() => {
+    createValidator().validate(brief, createContext(analysis, dossier));
+  });
+});
+
+test("invalid supported-facet evidence keeps the historical reference failure", () => {
+  const analysis = createAnalysis();
+  const dossier = createDossier();
+  const brief = addGroundedPositiveFacet(createBrief(analysis, dossier));
+  brief.requirementMatches[0].supportedFacets[0].evidenceRefs[0].itemId = "missing";
+  brief.evidenceFacts[0].ref.itemId = "missing";
+  expectReason(() => {
+    createValidator().validate(brief, createContext(analysis, dossier));
+  }, ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE);
+});
+
 test("out-of-range OfferRefs fail in emphasis supported claims and cautions", () => {
   const analysis = createAnalysis();
   const dossier = createDossier();
@@ -378,7 +454,8 @@ test("out-of-range OfferRefs fail in emphasis supported claims and cautions", ()
 test("context error exposes only its exact closed taxonomy", () => {
   assert.deepEqual(Object.values(ApplicationBriefContextValidationError.REASON), [
     "INVALID_OFFER_REFERENCE", "INVALID_EVIDENCE_REFERENCE", "EVIDENCE_VALUE_MISMATCH",
-    "FACET_NOT_IN_REQUIREMENT", "INCOMPLETE_REQUIREMENT_COVERAGE", "STALE_INPUT",
+    "FACET_NOT_IN_REQUIREMENT", "INCOMPLETE_REQUIREMENT_COVERAGE",
+    "MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE", "STALE_INPUT",
   ]);
   assert.throws(() => {
     new ApplicationBriefContextValidationError("UNKNOWN");

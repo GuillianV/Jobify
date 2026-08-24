@@ -50,6 +50,7 @@ class ApplicationBriefContextValidator {
     this.validateEvidenceFacts(brief, context.candidateDossier);
     this.validateRequirementFacets(brief, context.offerAnalysis);
     this.validateRemainingOfferRefs(brief, context.offerAnalysis);
+    this.validateSupportedClaimsInvariant(brief);
     return brief;
   }
 
@@ -183,6 +184,28 @@ class ApplicationBriefContextValidator {
       for (const reference of item.offerRefs) {
         this.offerRefResolver.resolve(analysis, reference);
       }
+    }
+  }
+
+  /**
+   * Require one strategic claim when validated requirement facets contain grounded support.
+   * @param {import("../models/ApplicationBrief.js").ApplicationBrief} brief - Validated contextual brief.
+   * @returns {void}
+   */
+  validateSupportedClaimsInvariant(brief) {
+    if (brief.supportedClaims.length > 0) {
+      return;
+    }
+    const hasGroundedPositiveSupport = brief.requirementMatches.some((match) => {
+      return match.supportedFacets.some((facet) => {
+        return facet.evidenceRefs.length > 0;
+      });
+    });
+    if (hasGroundedPositiveSupport) {
+      this.fail(
+        ApplicationBriefContextValidationError.REASON
+          .MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE,
+      );
     }
   }
 

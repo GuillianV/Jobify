@@ -176,6 +176,28 @@ test("hallucinated offer and evidence refs and invalid facets fail as contextual
   }
 });
 
+test("grounded support without a strategic claim fails as contextual model output", async () => {
+  const semanticOutput = createSemanticOutput();
+  semanticOutput.supportedClaims = [];
+  const snapshot = structuredClone(semanticOutput);
+  await assert.rejects(createHarness(semanticOutput).builder.build({
+    offerAnalysis: createAnalysis(), offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  }), (error) => {
+    assert.equal(error instanceof ApplicationBriefMatcherError, true);
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
+    assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_CONTEXTUAL_OUTPUT);
+    assert.equal(
+      error.cause?.reason,
+      ApplicationBriefContextValidationError.REASON
+        .MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE,
+    );
+    return true;
+  });
+  assert.deepEqual(semanticOutput, snapshot);
+  assert.deepEqual(semanticOutput.supportedClaims, []);
+});
+
 test("authoritative stale input remains a contextual error instead of a model error", async () => {
   const baseAssembler = createHarness(createSemanticOutput()).assembler;
   const staleAssembler = {

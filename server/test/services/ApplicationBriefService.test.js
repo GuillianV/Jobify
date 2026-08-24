@@ -258,6 +258,8 @@ test("service logs only mapped contextual invalid-output reasons", async () => {
     ApplicationBriefContextValidationError.REASON.INVALID_OFFER_REFERENCE,
     ApplicationBriefContextValidationError.REASON.FACET_NOT_IN_REQUIREMENT,
     ApplicationBriefContextValidationError.REASON.INCOMPLETE_REQUIREMENT_COVERAGE,
+    ApplicationBriefContextValidationError.REASON
+      .MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE,
   ];
   for (const reason of reasons) {
     const cause = new ApplicationBriefContextValidationError(reason);
@@ -275,6 +277,7 @@ test("service logs only mapped contextual invalid-output reasons", async () => {
       validationCode: "CONTEXTUAL_VALIDATION",
       validationSubcode: reason,
     }]);
+    assert.deepEqual(harness.calls.sign, []);
   }
 });
 

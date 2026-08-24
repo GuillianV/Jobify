@@ -11,6 +11,8 @@ const CONTEXTUAL_SUBCODES = new Set([
   ApplicationBriefContextValidationError.REASON.INVALID_OFFER_REFERENCE,
   ApplicationBriefContextValidationError.REASON.FACET_NOT_IN_REQUIREMENT,
   ApplicationBriefContextValidationError.REASON.INCOMPLETE_REQUIREMENT_COVERAGE,
+  ApplicationBriefContextValidationError.REASON
+    .MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE,
 ]);
 
 /**
