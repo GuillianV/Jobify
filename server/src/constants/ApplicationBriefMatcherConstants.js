@@ -34,6 +34,10 @@ class ApplicationBriefMatcherConstants {
 
   static FINAL_CROSS_CLASS_RETRY_ATTEMPT = 3;
 
+  static ABSOLUTE_PROVIDER_CALL_CAP = 3;
+
+  static LOCAL_REGENERATION_MAX = 1;
+
   static TIMEOUT_MS = 30000;
 }
 

@@ -50,7 +50,7 @@ class ApplicationBriefSemanticMatcher {
    * @param {object} projection - Exact ApplicationBriefInputProjector output.
    * @returns {Promise<{semanticOutput: object, providerExecution: object}>} Validated output and execution metadata.
    */
-  async matchWithExecution(projection) {
+  async matchWithExecution(projection, boundedSession = {}) {
     const serializedInput = JSON.stringify(projection);
     if (serializedInput.length > this.config.maxInputCharacters) {
       throw new ApplicationBriefMatcherError(
@@ -58,7 +58,10 @@ class ApplicationBriefSemanticMatcher {
       );
     }
     const prompts = this.promptBuilder.build(projection);
-    const result = await this.requestSemanticOutput(prompts);
+    const result = await this.requestSemanticOutput(
+      prompts,
+      this.createBoundedSession(boundedSession),
+    );
     const semanticOutput = this.semanticValidator.validate(result.rawOutput);
     return {
       semanticOutput,
@@ -79,9 +82,8 @@ class ApplicationBriefSemanticMatcher {
    * @param {{systemPrompt: string, userPrompt: string}} prompts - Exact prompts.
    * @returns {Promise<object>} Parsed JSON with closed execution metadata.
    */
-  async requestSemanticOutput(prompts) {
-    const initialMaxTokens = this.config.maxTokens;
-    const execution = { providerCallsMade: 0 };
+  async requestSemanticOutput(prompts, execution) {
+    const initialMaxTokens = execution.initialMaxTokens;
     try {
       return await this.complete(prompts, initialMaxTokens, INITIAL_ATTEMPT, execution);
     } catch (error) {
@@ -92,6 +94,9 @@ class ApplicationBriefSemanticMatcher {
       let expectedRetryTokenBudget = null;
       let tokenBudgetRetry = false;
       if (this.isJsonValidationRetry(error)) {
+        if (!this.hasProviderCallAllowance(execution)) {
+          throw this.mapGroqError(error);
+        }
         this.logJsonValidationRetry(error);
       } else if (error.code === GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
         retryMaxTokens = this.calculateRetryMaxTokens(error, initialMaxTokens);
@@ -110,6 +115,9 @@ class ApplicationBriefSemanticMatcher {
         if (expectedRetryTokenBudget !== null) {
           execution.successfulRequestTokenBudget = expectedRetryTokenBudget;
         }
+        if (!this.hasProviderCallAllowance(execution)) {
+          throw this.mapGroqError(error);
+        }
         this.logTokenBudgetRetry(error, retryMaxTokens);
         tokenBudgetRetry = true;
       } else {
@@ -127,6 +135,9 @@ class ApplicationBriefSemanticMatcher {
           throw retryError;
         }
         if (tokenBudgetRetry && this.isJsonValidationRetry(retryError)) {
+          if (!this.hasProviderCallAllowance(execution)) {
+            throw this.mapGroqError(retryError);
+          }
           if (this.shouldSkipCrossClassRetry(retryError, expectedRetryTokenBudget)) {
             this.logCrossClassSkip(retryError, expectedRetryTokenBudget);
             throw new ApplicationBriefMatcherError(
@@ -294,6 +305,11 @@ class ApplicationBriefSemanticMatcher {
    * @returns {Promise<object>} Parsed JSON with closed execution metadata.
    */
   async complete(prompts, maxTokens, attempt, execution) {
+    if (!this.hasProviderCallAllowance(execution)) {
+      throw new ApplicationBriefMatcherError(
+        ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+      );
+    }
     const request = {
       ...prompts,
       model: this.config.model,
@@ -317,6 +333,42 @@ class ApplicationBriefSemanticMatcher {
         : {}),
       safeRateLimitDetails: { ...result.safeRateLimitDetails },
     };
+  }
+
+  /**
+   * Create one validated internal provider-call session with historical defaults.
+   * @param {object} boundedSession - Optional continuation inputs.
+   * @returns {object} Mutable bounded execution state.
+   */
+  createBoundedSession(boundedSession) {
+    const constants = ApplicationBriefMatcherConstants;
+    const startingProviderCallsMade = boundedSession.startingProviderCallsMade ?? 0;
+    const providerCallCap = boundedSession.providerCallCap
+      ?? constants.ABSOLUTE_PROVIDER_CALL_CAP;
+    const initialMaxTokens = boundedSession.initialMaxTokens ?? this.config.maxTokens;
+    const valid = Number.isSafeInteger(startingProviderCallsMade)
+      && startingProviderCallsMade >= 0
+      && providerCallCap === constants.ABSOLUTE_PROVIDER_CALL_CAP
+      && startingProviderCallsMade <= providerCallCap
+      && Number.isSafeInteger(initialMaxTokens)
+      && initialMaxTokens > 0;
+    if (!valid) {
+      throw new TypeError("Invalid ApplicationBrief bounded provider session");
+    }
+    return {
+      providerCallsMade: startingProviderCallsMade,
+      providerCallCap,
+      initialMaxTokens,
+    };
+  }
+
+  /**
+   * Determine whether one actual provider call remains in the global session.
+   * @param {object} execution - Mutable bounded execution state.
+   * @returns {boolean} Whether a provider call may start.
+   */
+  hasProviderCallAllowance(execution) {
+    return execution.providerCallsMade < execution.providerCallCap;
   }
 
   /**

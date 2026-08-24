@@ -244,6 +244,67 @@ test("matcher detailed success counts special Attempt 3 without resetting reduce
   });
 });
 
+test("bounded session continues global counting and reuses its retained maxTokens", async () => {
+  const requests = [];
+  const matcher = createMatcher(async (request) => {
+    requests.push(structuredClone(request));
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+  const result = await matcher.matchWithExecution({ offer: {}, candidate: {} }, {
+    startingProviderCallsMade: MAXIMUM_TECHNICAL_ATTEMPTS,
+    providerCallCap: MAXIMUM_CROSS_CLASS_ATTEMPTS,
+    initialMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].maxTokens, EXPECTED_RETRY_MAX_TOKENS);
+  assert.equal(result.providerExecution.providerCallsMade, MAXIMUM_CROSS_CLASS_ATTEMPTS);
+  assert.equal(result.providerExecution.successfulMaxTokens, EXPECTED_RETRY_MAX_TOKENS);
+});
+
+test("global call three makes 413 and json validation failures terminal", async () => {
+  const cases = [
+    [createTokenBudgetError, ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET],
+    [createJsonValidationError, ApplicationBriefMatcherError.CODE.PROVIDER_ERROR],
+  ];
+  for (const [createError, expectedCode] of cases) {
+    let calls = 0;
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      throw createError();
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+    await assert.rejects(matcher.matchWithExecution({ offer: {}, candidate: {} }, {
+      startingProviderCallsMade: MAXIMUM_TECHNICAL_ATTEMPTS,
+      providerCallCap: MAXIMUM_CROSS_CLASS_ATTEMPTS,
+      initialMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+    }), (error) => {
+      return error instanceof ApplicationBriefMatcherError && error.code === expectedCode;
+    });
+    assert.equal(calls, 1);
+  }
+});
+
+test("global call two may use exactly one existing technical recovery call", async () => {
+  for (const createError of [createTokenBudgetError, createJsonValidationError]) {
+    let calls = 0;
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw createError();
+      }
+      return createOutput();
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+    const result = await matcher.matchWithExecution({ offer: {}, candidate: {} }, {
+      startingProviderCallsMade: 1,
+      providerCallCap: MAXIMUM_CROSS_CLASS_ATTEMPTS,
+      initialMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+    });
+    assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+    assert.equal(result.providerExecution.providerCallsMade, MAXIMUM_CROSS_CLASS_ATTEMPTS);
+  }
+});
+
 test("known GPT-OSS models use json object with otherwise unchanged settings", async () => {
   for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
     const requests = [];

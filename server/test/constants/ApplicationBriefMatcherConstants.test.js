@@ -21,5 +21,7 @@ test("matcher policy and bounded execution constants are exact", () => {
   );
   assert.equal(ApplicationBriefMatcherConstants.RETRY_ATTEMPT, 2);
   assert.equal(ApplicationBriefMatcherConstants.FINAL_CROSS_CLASS_RETRY_ATTEMPT, 3);
+  assert.equal(ApplicationBriefMatcherConstants.ABSOLUTE_PROVIDER_CALL_CAP, 3);
+  assert.equal(ApplicationBriefMatcherConstants.LOCAL_REGENERATION_MAX, 1);
   assert.equal(ApplicationBriefMatcherConstants.TIMEOUT_MS, 30000);
 });

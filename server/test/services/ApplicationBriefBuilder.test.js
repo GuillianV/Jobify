@@ -27,6 +27,12 @@ const OFFER_IDENTITY = Object.freeze({
 const EXPERIENCE_REF = Object.freeze({
   kind: "EXPERIENCE", itemId: "experience-1", field: "role",
 });
+const REDUCED_MAX_TOKENS = 3000;
+const REQUEST_TOKEN_BUDGET = 9000;
+const GREATER_TOKEN_HEADROOM = 10000;
+const ACTIVE_RETRY_AFTER_MS = 1000;
+const INITIAL_PROVIDER_CALLS = 2;
+const REGENERATED_PHASE_COUNT = 2;
 
 /**
  * Build one authoritative analysis with one React requirement.
@@ -90,6 +96,42 @@ function createSemanticOutput() {
 }
 
 /**
+ * Build one exact execution envelope that permits one bounded local regeneration.
+ * @param {object} [overrides] - Metadata overrides.
+ * @returns {object} Internal execution metadata fixture.
+ */
+function createRetryableExecution(overrides = {}) {
+  return {
+    providerCallsMade: INITIAL_PROVIDER_CALLS,
+    successfulMaxTokens: REDUCED_MAX_TOKENS,
+    successfulRequestTokenBudget: REQUEST_TOKEN_BUDGET,
+    rateLimitTokenRemaining: REQUEST_TOKEN_BUDGET,
+    rateLimitRequestRemaining: 1,
+    ...overrides,
+  };
+}
+
+/**
+ * Build an analysis and semantic output with two exactly covered requirements.
+ * @returns {{analysis: OfferAnalysis, semanticOutput: object}} Complete coverage fixtures.
+ */
+function createTwoRequirementFixtures() {
+  const secondRequirement = {
+    category: "SKILL", value: "Vue", importance: "OPTIONAL",
+    assertion: "EXPLICIT", evidence: { text: "Vue" },
+  };
+  const analysis = createAnalysis({
+    requirements: [...createAnalysis().requirements, secondRequirement],
+  });
+  const semanticOutput = createSemanticOutput();
+  semanticOutput.requirementMatches.push({
+    offerRef: { kind: "REQUIREMENT", index: 1 }, state: "NOT_EVIDENCED",
+    supportedFacets: [], notEvidencedFacets: [{ text: "Vue" }],
+  });
+  return { analysis, semanticOutput };
+}
+
+/**
  * Create real deterministic builder dependencies around one fake matcher.
  * @param {object} semanticOutput - Matcher result.
  * @param {object} [overrides] - Dependency overrides.
@@ -97,6 +139,15 @@ function createSemanticOutput() {
  */
 function createHarness(semanticOutput, overrides = {}) {
   const projections = [];
+  const sessions = [];
+  const logs = [];
+  const matcherResults = overrides.matcherResults ?? [{
+    semanticOutput,
+    providerExecution: {
+      providerCallsMade: 1,
+      successfulMaxTokens: ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    },
+  }];
   const inputProjector = new ApplicationBriefInputProjector();
   const assembler = new ApplicationBriefAssembler({
     evidenceResolver: new ApplicationBriefEvidenceResolver(),
@@ -111,21 +162,25 @@ function createHarness(semanticOutput, overrides = {}) {
   const builder = new ApplicationBriefBuilder({
     inputProjector,
     semanticMatcher: {
-      async matchWithExecution(projection) {
+      async matchWithExecution(projection, session) {
         projections.push(structuredClone(projection));
-        return {
-          semanticOutput: structuredClone(semanticOutput),
-          providerExecution: {
-            providerCallsMade: 1,
-            successfulMaxTokens: ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
-          },
-        };
+        sessions.push(session === undefined ? undefined : structuredClone(session));
+        const result = matcherResults[projections.length - 1];
+        if (result instanceof Error) {
+          throw result;
+        }
+        return structuredClone(result);
       },
     },
     assembler: overrides.assembler ?? assembler,
     contextValidator: overrides.contextValidator ?? contextValidator,
+    logger: overrides.logger ?? {
+      warn(value) {
+        logs.push(JSON.parse(value));
+      },
+    },
   });
-  return { builder, projections, assembler };
+  return { builder, projections, sessions, logs, assembler };
 }
 
 test("builder returns immutable final brief and sends only the minimal projection", async () => {
@@ -154,6 +209,224 @@ test("builder returns immutable final brief and sends only the minimal projectio
   assert.equal(Object.hasOwn(detached, "providerExecution"), false);
   detached.requirementMatches[0].supportedFacets[0].text = "Changed";
   assert.equal(brief.requirementMatches[0].supportedFacets[0].text, "React");
+});
+
+test("bounded retry repairs incomplete coverage with retained budget and one global call", async () => {
+  const fixtures = createTwoRequirementFixtures();
+  const harness = createHarness(createSemanticOutput(), {
+    matcherResults: [{
+      semanticOutput: createSemanticOutput(),
+      providerExecution: createRetryableExecution(),
+    }, {
+      semanticOutput: fixtures.semanticOutput,
+      providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
+    }],
+  });
+
+  const brief = await harness.builder.build({
+    offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  });
+
+  assert.equal(brief.requirementMatches.length, REGENERATED_PHASE_COUNT);
+  assert.equal(Object.hasOwn(brief, "providerExecution"), false);
+  assert.equal(Object.hasOwn(brief.toJson(), "providerExecution"), false);
+  assert.equal(harness.projections.length, REGENERATED_PHASE_COUNT);
+  assert.deepEqual(harness.projections[0], harness.projections[1]);
+  assert.equal(harness.sessions[0], undefined);
+  assert.deepEqual(harness.sessions[1], {
+    startingProviderCallsMade: INITIAL_PROVIDER_CALLS,
+    providerCallCap: 3,
+    initialMaxTokens: REDUCED_MAX_TOKENS,
+  });
+  assert.deepEqual(harness.logs.map((event) => {
+    return event.decision;
+  }), ["ATTEMPTED", "SUCCEEDED"]);
+  assert.deepEqual(Object.keys(harness.logs[0]), [
+    "event", "decision", "eligibilityReason", "providerCallCap", "providerCallsMade",
+  ]);
+  const serializedLogs = JSON.stringify(harness.logs);
+  for (const forbidden of [
+    "successfulRequestTokenBudget", "rateLimitTokenRemaining",
+    "rateLimitRequestRemaining", "retryAfterMs", "semanticOutput",
+  ]) {
+    assert.equal(serializedLogs.includes(forbidden), false);
+  }
+});
+
+test("bounded retry repairs one non-verbatim facet through the same validation path", async () => {
+  const invalidFacet = createSemanticOutput();
+  invalidFacet.requirementMatches[0].supportedFacets[0].text = "Vue";
+  const harness = createHarness(invalidFacet, {
+    matcherResults: [{
+      semanticOutput: invalidFacet,
+      providerExecution: createRetryableExecution(),
+    }, {
+      semanticOutput: createSemanticOutput(),
+      providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
+    }],
+  });
+
+  const brief = await harness.builder.build({
+    offerAnalysis: createAnalysis(), offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  });
+
+  assert.equal(brief.requirementMatches[0].supportedFacets[0].text, "React");
+  assert.equal(harness.projections.length, REGENERATED_PHASE_COUNT);
+  assert.deepEqual(harness.logs.map((event) => {
+    return event.eligibilityReason;
+  }), ["FACET_NOT_IN_REQUIREMENT", "FACET_NOT_IN_REQUIREMENT"]);
+});
+
+test("bounded retry skips every failed proven-headroom gate with one closed reason", async () => {
+  const cases = [
+    [{ providerCallsMade: 3 }, "PROVIDER_CALL_CAP_REACHED"],
+    [{ successfulRequestTokenBudget: undefined }, "REQUEST_TOKEN_BUDGET_UNAVAILABLE"],
+    [{ rateLimitTokenRemaining: undefined }, "TOKEN_REMAINING_UNAVAILABLE"],
+    [{ rateLimitTokenRemaining: REQUEST_TOKEN_BUDGET - 1 }, "TOKEN_HEADROOM_INSUFFICIENT"],
+    [{ rateLimitRequestRemaining: undefined }, "REQUEST_REMAINING_UNAVAILABLE"],
+    [{ rateLimitRequestRemaining: 0 }, "REQUEST_HEADROOM_INSUFFICIENT"],
+    [{ retryAfterMs: ACTIVE_RETRY_AFTER_MS }, "RETRY_AFTER_ACTIVE"],
+  ];
+  const fixtures = createTwoRequirementFixtures();
+  for (const [overrides, skipReason] of cases) {
+    const harness = createHarness(createSemanticOutput(), {
+      matcherResults: [{
+        semanticOutput: createSemanticOutput(),
+        providerExecution: createRetryableExecution(overrides),
+      }],
+    });
+    await assert.rejects(harness.builder.build({
+      offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+      candidateDossier: createDossier(),
+    }), (error) => {
+      return error instanceof ApplicationBriefMatcherError
+        && error.cause.reason === "INCOMPLETE_REQUIREMENT_COVERAGE";
+    });
+    assert.equal(harness.projections.length, 1);
+    assert.deepEqual(harness.logs, [{
+      event: "application_brief_local_regeneration",
+      decision: "SKIPPED",
+      eligibilityReason: "INCOMPLETE_REQUIREMENT_COVERAGE",
+      providerCallCap: 3,
+      skipReason,
+      providerCallsMade: overrides.providerCallsMade ?? INITIAL_PROVIDER_CALLS,
+    }]);
+  }
+});
+
+test("equal greater and zero-delay headroom permit exactly one regeneration", async () => {
+  const fixtures = createTwoRequirementFixtures();
+  for (const overrides of [
+    {},
+    { rateLimitTokenRemaining: GREATER_TOKEN_HEADROOM },
+    { retryAfterMs: 0 },
+  ]) {
+    const harness = createHarness(createSemanticOutput(), {
+      matcherResults: [{
+        semanticOutput: createSemanticOutput(),
+        providerExecution: createRetryableExecution(overrides),
+      }, {
+        semanticOutput: fixtures.semanticOutput,
+        providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
+      }],
+    });
+    await harness.builder.build({
+      offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+      candidateDossier: createDossier(),
+    });
+    assert.equal(harness.projections.length, REGENERATED_PHASE_COUNT);
+  }
+});
+
+test("a second local failure is terminal and never schedules another regeneration", async () => {
+  const invalidFacet = createSemanticOutput();
+  invalidFacet.requirementMatches[0].supportedFacets[0].text = "Vue";
+  const harness = createHarness(invalidFacet, {
+    matcherResults: [{
+      semanticOutput: invalidFacet,
+      providerExecution: createRetryableExecution(),
+    }, {
+      semanticOutput: invalidFacet,
+      providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
+    }],
+  });
+  await assert.rejects(harness.builder.build({
+    offerAnalysis: createAnalysis(), offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  }), (error) => {
+    return error instanceof ApplicationBriefMatcherError
+      && error.cause.reason === "FACET_NOT_IN_REQUIREMENT";
+  });
+  assert.equal(harness.projections.length, REGENERATED_PHASE_COUNT);
+  assert.equal(harness.logs.at(-1).decision, "FAILED_LOCAL");
+});
+
+test("a local regeneration provider rate limit remains terminal", async () => {
+  const fixtures = createTwoRequirementFixtures();
+  const providerError = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.RATE_LIMITED,
+  );
+  const harness = createHarness(createSemanticOutput(), {
+    matcherResults: [{
+      semanticOutput: createSemanticOutput(),
+      providerExecution: createRetryableExecution(),
+    }, providerError],
+  });
+  await assert.rejects(harness.builder.build({
+    offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  }), (error) => {
+    return error === providerError;
+  });
+  assert.equal(harness.projections.length, REGENERATED_PHASE_COUNT);
+  assert.equal(harness.logs.at(-1).decision, "FAILED_PROVIDER");
+  assert.equal(harness.logs.at(-1).providerClassification, "APPLICATION_BRIEF_RATE_LIMITED");
+});
+
+test("non-whitelisted contextual failures never evaluate regeneration headroom", async () => {
+  const deterministic = new ApplicationBriefContextValidationError(
+    ApplicationBriefContextValidationError.REASON.EVIDENCE_VALUE_MISMATCH,
+  );
+  const harness = createHarness(createSemanticOutput(), {
+    contextValidator: {
+      validate() {
+        throw deterministic;
+      },
+    },
+  });
+  await assert.rejects(harness.builder.build({
+    offerAnalysis: createAnalysis(), offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  }), (error) => {
+    return error === deterministic;
+  });
+  assert.equal(harness.projections.length, 1);
+  assert.deepEqual(harness.logs, []);
+});
+
+test("local regeneration logging failure never changes successful recovery", async () => {
+  const fixtures = createTwoRequirementFixtures();
+  const harness = createHarness(createSemanticOutput(), {
+    matcherResults: [{
+      semanticOutput: createSemanticOutput(),
+      providerExecution: createRetryableExecution(),
+    }, {
+      semanticOutput: fixtures.semanticOutput,
+      providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
+    }],
+    logger: {
+      warn() {
+        throw new Error("logger failure");
+      },
+    },
+  });
+  const brief = await harness.builder.build({
+    offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  });
+  assert.equal(brief.requirementMatches.length, REGENERATED_PHASE_COUNT);
 });
 
 test("hallucinated offer and evidence refs and invalid facets fail as contextual output", async () => {
