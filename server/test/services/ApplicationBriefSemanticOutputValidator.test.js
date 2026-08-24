@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ApplicationBriefConstants } from "../../src/constants/ApplicationBriefConstants.js";
 import { ApplicationBriefLimits } from "../../src/constants/ApplicationBriefLimits.js";
 import { CandidateDossierLimits } from "../../src/constants/CandidateDossierLimits.js";
+import { OfferAnalysisLimits } from "../../src/constants/OfferAnalysisLimits.js";
 import { ApplicationBriefMatcherError } from "../../src/services/ApplicationBriefMatcherError.js";
 import { ApplicationBriefSemanticOutputValidator } from "../../src/services/ApplicationBriefSemanticOutputValidator.js";
 
@@ -41,9 +42,10 @@ function createMatch(state) {
 /**
  * Assert the single closed semantic validation failure.
  * @param {Function} action - Failing action.
+ * @param {object} [expectedStructuralDetails] - Optional closed localization details.
  * @returns {void}
  */
-function expectInvalid(action, expectedSubcode) {
+function expectInvalid(action, expectedSubcode, expectedStructuralDetails) {
   assert.throws(action, (error) => {
     assert.equal(error instanceof ApplicationBriefMatcherError, true);
     assert.equal(error.code, "INVALID_APPLICATION_BRIEF_OUTPUT");
@@ -52,6 +54,7 @@ function expectInvalid(action, expectedSubcode) {
       assert.deepEqual(error.safeDetails, {
         validationCode: "SEMANTIC_VALIDATION",
         validationSubcode: expectedSubcode,
+        ...expectedStructuralDetails,
       });
     }
     return true;
@@ -406,6 +409,10 @@ test("whitespace-only facets fail while valid surrounding spaces remain unchange
   invalid.requirementMatches[0].supportedFacets[0].text = "   ";
   expectInvalid(() => {
     new ApplicationBriefSemanticOutputValidator().validate(invalid);
+  }, "TEXT_OR_IDENTIFIER_FORMAT", {
+    validationPath: "requirementMatches[0].supportedFacets[0].text",
+    validationCategory: "TEXT",
+    validationRule: "TEXT_BLANK",
   });
 
   const valid = createEmptyOutput();
@@ -418,6 +425,99 @@ test("whitespace-only facets fail while valid surrounding spaces remain unchange
   const result = new ApplicationBriefSemanticOutputValidator().validate(valid);
   assert.equal(result.requirementMatches[0].supportedFacets[0].text, " React ");
   assert.equal(result.emphasis[0].relevanceReason, "  Relevant exactly  ");
+});
+
+test("text failures expose only closed structural localization", () => {
+  const notEvidenced = createEmptyOutput();
+  notEvidenced.requirementMatches = [createMatch("NOT_EVIDENCED")];
+  notEvidenced.requirementMatches[0].notEvidencedFacets[0].text = "x".repeat(
+    OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH + 1,
+  );
+  expectInvalid(() => {
+    new ApplicationBriefSemanticOutputValidator().validate(notEvidenced);
+  }, "TEXT_OR_IDENTIFIER_FORMAT", {
+    validationPath: "requirementMatches[0].notEvidencedFacets[0].text",
+    validationCategory: "TEXT",
+    validationRule: "TEXT_TOO_LONG",
+  });
+
+  const emphasis = createEmptyOutput();
+  emphasis.emphasis = [{
+    priority: "PRIMARY",
+    offerRefs: [ACTIVITY_REF],
+    evidenceRefs: [EXPERIENCE_REF],
+    relevanceReason: "   ",
+  }];
+  expectInvalid(() => {
+    new ApplicationBriefSemanticOutputValidator().validate(emphasis);
+  }, "TEXT_OR_IDENTIFIER_FORMAT", {
+    validationPath: "emphasis[0].relevanceReason",
+    validationCategory: "TEXT",
+    validationRule: "TEXT_BLANK",
+  });
+});
+
+test("evidence identifiers expose closed rules without rejected values", () => {
+  const cases = [
+    ["private invalid id", "ITEM_ID_INVALID_CHARSET"],
+    ["x".repeat(CandidateDossierLimits.MAXIMUM_ID_LENGTH + 1), "ITEM_ID_TOO_LONG"],
+  ];
+  for (const [itemId, validationRule] of cases) {
+    const output = createEmptyOutput();
+    output.emphasis = [{
+      priority: "PRIMARY",
+      offerRefs: [ACTIVITY_REF],
+      evidenceRefs: [{ ...EXPERIENCE_REF, itemId }],
+      relevanceReason: "Relevant",
+    }];
+    assert.throws(() => {
+      new ApplicationBriefSemanticOutputValidator().validate(output);
+    }, (error) => {
+      assert.deepEqual(error.safeDetails, {
+        validationCode: "SEMANTIC_VALIDATION",
+        validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
+        validationPath: "emphasis[0].evidenceRefs[0].itemId",
+        validationCategory: "IDENTIFIER_ITEM_ID",
+        validationRule,
+      });
+      assert.equal(JSON.stringify(error.safeDetails).includes(itemId), false);
+      return true;
+    });
+  }
+});
+
+test("evidence fields distinguish closed syntax kind and range failures", () => {
+  const cases = [
+    ["EXPERIENCE", "privateField", "FIELD_UNKNOWN_SCALAR"],
+    ["EXPERIENCE", "activities[01]", "FIELD_INVALID_INDEXED_SYNTAX"],
+    ["SKILL", "activities[0]", "FIELD_KIND_INCOMPATIBLE"],
+    [
+      "EXPERIENCE",
+      `activities[${CandidateDossierLimits.MAXIMUM_ACTIVITIES}]`,
+      "FIELD_INDEX_OUT_OF_NORMATIVE_RANGE",
+    ],
+  ];
+  for (const [kind, field, validationRule] of cases) {
+    const output = createEmptyOutput();
+    output.cautions = [{
+      kind: "DURATION_UNSUPPORTED",
+      offerRefs: [REQUIREMENT_REF],
+      evidenceRefs: [{ kind, itemId: "item-1", field }],
+    }];
+    assert.throws(() => {
+      new ApplicationBriefSemanticOutputValidator().validate(output);
+    }, (error) => {
+      assert.deepEqual(error.safeDetails, {
+        validationCode: "SEMANTIC_VALIDATION",
+        validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
+        validationPath: "cautions[0].evidenceRefs[0].field",
+        validationCategory: "IDENTIFIER_FIELD",
+        validationRule,
+      });
+      assert.equal(JSON.stringify(error.safeDetails).includes(field), false);
+      return true;
+    });
+  }
 });
 
 test("match-wide evidence union enforces its limit and counts shared refs once", () => {

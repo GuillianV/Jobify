@@ -84,8 +84,7 @@ class ApplicationBriefService {
     try {
       this.logger.warn(JSON.stringify({
         event: INVALID_OUTPUT_DIAGNOSTIC_EVENT,
-        validationCode: details.validationCode,
-        validationSubcode: details.validationSubcode,
+        ...details,
       }));
     } catch {
       return;
@@ -136,7 +135,7 @@ class ApplicationBriefService {
   /**
    * Resolve one terminal error into closed contextually coherent diagnostics.
    * @param {ApplicationBriefMatcherError} error - Terminal invalid-output failure.
-   * @returns {{validationCode: string|null, validationSubcode: string|null}} Safe details.
+   * @returns {object} Safe closed validation details.
    */
   resolveInvalidOutputDetails(error) {
     const codes = ApplicationBriefMatcherError.VALIDATION_CODE;
@@ -153,6 +152,9 @@ class ApplicationBriefService {
       return ApplicationBriefMatcherError.createSafeDetails(
         error.safeDetails?.validationCode === semanticCode ? semanticCode : null,
         error.safeDetails?.validationSubcode,
+        error.safeDetails?.validationPath,
+        error.safeDetails?.validationCategory,
+        error.safeDetails?.validationRule,
       );
     }
     const contextualSubcode = error.reason

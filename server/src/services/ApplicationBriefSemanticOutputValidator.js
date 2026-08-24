@@ -22,6 +22,7 @@ const SUPPORTED_CLAIM_KEYS = Object.freeze(["claimType", "offerRefs", "evidenceR
 const CAUTION_KEYS = Object.freeze(["kind", "offerRefs", "evidenceRefs"]);
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const ARRAY_FIELD_PATTERN = /^(activities|achievements|technologies)\[(0|[1-9]\d*)\]$/u;
+const INDEXED_FIELD_PREFIX_PATTERN = /^(activities|achievements|technologies)\[/u;
 const SCALAR_FIELDS = Object.freeze({
   EXPERIENCE: Object.freeze([
     "role", "organization", "client", "startDate", "endDate", "current", "domain",
@@ -111,7 +112,7 @@ class ApplicationBriefSemanticOutputValidator {
   validateRequirementMatches(matches) {
     this.requireArray(matches, ApplicationBriefLimits.MAX_REQUIREMENT_MATCHES);
     const indices = new Set();
-    for (const match of matches) {
+    for (const [matchIndex, match] of matches.entries()) {
       this.requireExactObject(match, REQUIREMENT_MATCH_KEYS);
       this.validateOfferRef(match.offerRef, ApplicationBriefConstants.OFFER_REF_KIND.REQUIREMENT);
       if (indices.has(match.offerRef.index)) {
@@ -119,8 +120,8 @@ class ApplicationBriefSemanticOutputValidator {
       }
       indices.add(match.offerRef.index);
       this.requireEnum(match.state, ApplicationBriefConstants.EVIDENCE_STATE);
-      this.validateSupportedFacets(match.supportedFacets);
-      this.validateNotEvidencedFacets(match.notEvidencedFacets);
+      this.validateSupportedFacets(match.supportedFacets, matchIndex);
+      this.validateNotEvidencedFacets(match.notEvidencedFacets, matchIndex);
       this.validateMatchInvariants(match);
     }
   }
@@ -128,33 +129,44 @@ class ApplicationBriefSemanticOutputValidator {
   /**
    * Validate supported facets and their evidence references.
    * @param {unknown} facets - Supported facet candidates.
+   * @param {number} matchIndex - Traversal-controlled requirement match index.
    * @returns {void}
    */
-  validateSupportedFacets(facets) {
+  validateSupportedFacets(facets, matchIndex) {
     this.requireArray(facets, ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH);
     const texts = new Set();
-    for (const facet of facets) {
+    for (const [facetIndex, facet] of facets.entries()) {
       this.requireExactObject(facet, SUPPORTED_FACET_KEYS);
-      this.requireText(facet.text, OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH);
+      const path = `requirementMatches[${matchIndex}].supportedFacets[${facetIndex}]`;
+      this.requireText(
+        facet.text,
+        OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH,
+        `${path}.text`,
+      );
       if (texts.has(facet.text)) {
         this.fail(SUBCODE.DUPLICATE);
       }
       texts.add(facet.text);
-      this.validateEvidenceRefs(facet.evidenceRefs, true);
+      this.validateEvidenceRefs(facet.evidenceRefs, true, `${path}.evidenceRefs`);
     }
   }
 
   /**
    * Validate not-evidenced facets without candidate assertions.
    * @param {unknown} facets - Not-evidenced facet candidates.
+   * @param {number} matchIndex - Traversal-controlled requirement match index.
    * @returns {void}
    */
-  validateNotEvidencedFacets(facets) {
+  validateNotEvidencedFacets(facets, matchIndex) {
     this.requireArray(facets, ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH);
     const texts = new Set();
-    for (const facet of facets) {
+    for (const [facetIndex, facet] of facets.entries()) {
       this.requireExactObject(facet, NOT_EVIDENCED_FACET_KEYS);
-      this.requireText(facet.text, OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH);
+      this.requireText(
+        facet.text,
+        OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH,
+        `requirementMatches[${matchIndex}].notEvidencedFacets[${facetIndex}].text`,
+      );
       if (texts.has(facet.text)) {
         this.fail(SUBCODE.DUPLICATE);
       }
@@ -205,12 +217,17 @@ class ApplicationBriefSemanticOutputValidator {
    */
   validateEmphasis(entries) {
     this.requireArray(entries, ApplicationBriefLimits.MAX_EMPHASIS);
-    for (const entry of entries) {
+    for (const [entryIndex, entry] of entries.entries()) {
+      const path = `emphasis[${entryIndex}]`;
       this.requireExactObject(entry, EMPHASIS_KEYS);
       this.requireEnum(entry.priority, ApplicationBriefConstants.PRIORITY);
       this.validateOfferRefs(entry.offerRefs, true);
-      this.validateEvidenceRefs(entry.evidenceRefs, true);
-      this.requireText(entry.relevanceReason, ApplicationBriefLimits.MAX_RELEVANCE_REASON_LENGTH);
+      this.validateEvidenceRefs(entry.evidenceRefs, true, `${path}.evidenceRefs`);
+      this.requireText(
+        entry.relevanceReason,
+        ApplicationBriefLimits.MAX_RELEVANCE_REASON_LENGTH,
+        `${path}.relevanceReason`,
+      );
     }
   }
 
@@ -222,11 +239,15 @@ class ApplicationBriefSemanticOutputValidator {
   validateSupportedClaims(claims) {
     this.requireArray(claims, ApplicationBriefLimits.MAX_SUPPORTED_CLAIMS);
     const signatures = new Set();
-    for (const claim of claims) {
+    for (const [claimIndex, claim] of claims.entries()) {
       this.requireExactObject(claim, SUPPORTED_CLAIM_KEYS);
       this.requireEnum(claim.claimType, ApplicationBriefConstants.CLAIM_TYPE);
       this.validateOfferRefs(claim.offerRefs, true);
-      this.validateEvidenceRefs(claim.evidenceRefs, true);
+      this.validateEvidenceRefs(
+        claim.evidenceRefs,
+        true,
+        `supportedClaims[${claimIndex}].evidenceRefs`,
+      );
       if (claim.evidenceRefs.some((reference) => {
         return reference.kind !== CLAIM_EVIDENCE_KIND[claim.claimType];
       })) {
@@ -244,11 +265,15 @@ class ApplicationBriefSemanticOutputValidator {
   validateCautions(cautions) {
     this.requireArray(cautions, ApplicationBriefLimits.MAX_CAUTIONS);
     const signatures = new Set();
-    for (const caution of cautions) {
+    for (const [cautionIndex, caution] of cautions.entries()) {
       this.requireExactObject(caution, CAUTION_KEYS);
       this.requireEnum(caution.kind, ApplicationBriefConstants.CAUTION_KIND);
       this.validateOfferRefs(caution.offerRefs, true);
-      this.validateEvidenceRefs(caution.evidenceRefs, true);
+      this.validateEvidenceRefs(
+        caution.evidenceRefs,
+        true,
+        `cautions[${cautionIndex}].evidenceRefs`,
+      );
       this.rejectDuplicateSignature(signatures, caution);
     }
   }
@@ -302,16 +327,17 @@ class ApplicationBriefSemanticOutputValidator {
    * Validate bounded unique evidence references.
    * @param {unknown} references - Evidence reference candidates.
    * @param {boolean} nonEmpty - Whether the collection must be non-empty.
+   * @param {string} path - Closed structural collection path.
    * @returns {void}
    */
-  validateEvidenceRefs(references, nonEmpty) {
+  validateEvidenceRefs(references, nonEmpty, path) {
     this.requireArray(references, ApplicationBriefLimits.MAX_REFS_PER_ITEM);
     if (nonEmpty && references.length === 0) {
       this.fail(SUBCODE.CARDINALITY);
     }
     const keys = new Set();
-    for (const reference of references) {
-      this.validateEvidenceRef(reference);
+    for (const [referenceIndex, reference] of references.entries()) {
+      this.validateEvidenceRef(reference, `${path}[${referenceIndex}]`);
       const key = this.evidenceRefKey(reference);
       if (keys.has(key)) {
         this.fail(SUBCODE.DUPLICATE);
@@ -323,43 +349,85 @@ class ApplicationBriefSemanticOutputValidator {
   /**
    * Validate one evidence reference against the closed 9A.1 vocabulary.
    * @param {unknown} reference - Evidence reference candidate.
+   * @param {string} path - Closed structural evidence reference path.
    * @returns {void}
    */
-  validateEvidenceRef(reference) {
+  validateEvidenceRef(reference, path) {
     this.requireExactObject(reference, EVIDENCE_REF_KEYS);
     this.requireEnum(reference.kind, ApplicationBriefConstants.EVIDENCE_KIND);
-    if (typeof reference.itemId !== "string" || !reference.itemId
-      || reference.itemId.length > CandidateDossierLimits.MAXIMUM_ID_LENGTH
-      || !ID_PATTERN.test(reference.itemId)) {
-      this.fail(SUBCODE.TEXT_OR_IDENTIFIER_FORMAT);
+    const categories = ApplicationBriefMatcherError.VALIDATION_CATEGORY;
+    const rules = ApplicationBriefMatcherError.VALIDATION_RULE;
+    if (typeof reference.itemId !== "string") {
+      this.failFormat(`${path}.itemId`, categories.IDENTIFIER_ITEM_ID, rules.ITEM_ID_NOT_STRING);
+    }
+    if (!reference.itemId) {
+      this.failFormat(`${path}.itemId`, categories.IDENTIFIER_ITEM_ID, rules.ITEM_ID_EMPTY);
+    }
+    if (reference.itemId.length > CandidateDossierLimits.MAXIMUM_ID_LENGTH) {
+      this.failFormat(`${path}.itemId`, categories.IDENTIFIER_ITEM_ID, rules.ITEM_ID_TOO_LONG);
+    }
+    if (!ID_PATTERN.test(reference.itemId)) {
+      this.failFormat(
+        `${path}.itemId`,
+        categories.IDENTIFIER_ITEM_ID,
+        rules.ITEM_ID_INVALID_CHARSET,
+      );
     }
     if (typeof reference.field !== "string") {
-      this.fail(SUBCODE.TYPE);
+      this.fail(
+        SUBCODE.TYPE,
+        `${path}.field`,
+        categories.IDENTIFIER_FIELD,
+        rules.FIELD_NOT_STRING,
+      );
     }
     const scalar = SCALAR_FIELDS[reference.kind]?.includes(reference.field);
     const indexedMatch = reference.field.match(ARRAY_FIELD_PATTERN);
-    if (!scalar && !this.isValidIndexedField(reference.kind, indexedMatch)) {
-      this.fail(SUBCODE.TEXT_OR_IDENTIFIER_FORMAT);
+    if (scalar) {
+      return;
+    }
+    if (indexedMatch === null) {
+      const rule = INDEXED_FIELD_PREFIX_PATTERN.test(reference.field)
+        ? rules.FIELD_INVALID_INDEXED_SYNTAX
+        : rules.FIELD_UNKNOWN_SCALAR;
+      this.failFormat(`${path}.field`, categories.IDENTIFIER_FIELD, rule);
+    }
+    if (!this.isIndexedFieldKindCompatible(reference.kind, indexedMatch)) {
+      this.failFormat(
+        `${path}.field`,
+        categories.IDENTIFIER_FIELD,
+        rules.FIELD_KIND_INCOMPATIBLE,
+      );
+    }
+    if (!this.isIndexedFieldInNormativeRange(indexedMatch)) {
+      this.failFormat(
+        `${path}.field`,
+        categories.IDENTIFIER_FIELD,
+        rules.FIELD_INDEX_OUT_OF_NORMATIVE_RANGE,
+      );
     }
   }
 
   /**
-   * Validate an indexed evidence field against its kind and normative array bound.
+   * Validate an indexed evidence field against its evidence kind.
    * @param {string} kind - Evidence kind.
-   * @param {RegExpMatchArray|null} match - Parsed indexed field.
-   * @returns {boolean} Whether the indexed field is valid.
+   * @param {RegExpMatchArray} match - Parsed indexed field.
+   * @returns {boolean} Whether the indexed field is legal for the kind.
    */
-  isValidIndexedField(kind, match) {
-    if (!match) {
-      return false;
-    }
+  isIndexedFieldKindCompatible(kind, match) {
     const allowed = {
       EXPERIENCE: ["activities", "achievements", "technologies"],
       PROJECT: ["activities", "achievements", "technologies"],
     };
-    if (!allowed[kind]?.includes(match[1])) {
-      return false;
-    }
+    return allowed[kind]?.includes(match[1]) === true;
+  }
+
+  /**
+   * Validate an indexed evidence field against its normative array bound.
+   * @param {RegExpMatchArray} match - Parsed indexed field.
+   * @returns {boolean} Whether the index is within its normative maximum.
+   */
+  isIndexedFieldInNormativeRange(match) {
     const limits = {
       activities: CandidateDossierLimits.MAXIMUM_ACTIVITIES,
       achievements: CandidateDossierLimits.MAXIMUM_ACHIEVEMENTS,
@@ -465,18 +533,40 @@ class ApplicationBriefSemanticOutputValidator {
    * @param {number} maximum - Maximum character length.
    * @returns {void}
    */
-  requireText(value, maximum) {
-    if (typeof value !== "string" || !value.trim() || value.length > maximum) {
-      this.fail(SUBCODE.TEXT_OR_IDENTIFIER_FORMAT);
+  requireText(value, maximum, path) {
+    const category = ApplicationBriefMatcherError.VALIDATION_CATEGORY.TEXT;
+    const rules = ApplicationBriefMatcherError.VALIDATION_RULE;
+    if (typeof value !== "string") {
+      this.failFormat(path, category, rules.TEXT_NOT_STRING);
     }
+    if (!value.trim()) {
+      this.failFormat(path, category, rules.TEXT_BLANK);
+    }
+    if (value.length > maximum) {
+      this.failFormat(path, category, rules.TEXT_TOO_LONG);
+    }
+  }
+
+  /**
+   * Raise one safely localized text or identifier format failure.
+   * @param {string} path - Closed structural output path.
+   * @param {string} category - Closed field category.
+   * @param {string} rule - Closed deterministic rule.
+   * @returns {never}
+   */
+  failFormat(path, category, rule) {
+    this.fail(SUBCODE.TEXT_OR_IDENTIFIER_FORMAT, path, category, rule);
   }
 
   /**
    * Raise the single closed semantic contract failure.
    * @param {string} subcode - Closed semantic validation category.
+   * @param {string} [validationPath] - Closed structural output path.
+   * @param {string} [validationCategory] - Closed field category.
+   * @param {string} [validationRule] - Closed deterministic rule.
    * @returns {never}
    */
-  fail(subcode) {
+  fail(subcode, validationPath, validationCategory, validationRule) {
     throw new ApplicationBriefMatcherError(
       ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
       ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
@@ -484,6 +574,9 @@ class ApplicationBriefSemanticOutputValidator {
       {
         validationCode: ApplicationBriefMatcherError.VALIDATION_CODE.SEMANTIC_VALIDATION,
         validationSubcode: subcode,
+        validationPath,
+        validationCategory,
+        validationRule,
       },
     );
   }

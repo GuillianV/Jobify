@@ -202,6 +202,38 @@ test("service logs semantic validation once and neutralizes unsafe details", asy
   }
 });
 
+test("service logs only closed semantic structural localization", async () => {
+  const rejectedValue = "private rejected value";
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    null,
+    {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
+      validationPath: "emphasis[0].relevanceReason",
+      validationCategory: "TEXT",
+      validationRule: "TEXT_BLANK",
+      value: rejectedValue,
+    },
+  );
+  const harness = createHarness({ builderError: expected });
+
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+    event: "application_brief_semantic_matcher_invalid_output",
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
+    validationPath: "emphasis[0].relevanceReason",
+    validationCategory: "TEXT",
+    validationRule: "TEXT_BLANK",
+  }]);
+  assert.equal(harness.calls.logs[0].includes(rejectedValue), false);
+  assert.deepEqual(harness.calls.sign, []);
+});
+
 test("service logs only mapped contextual invalid-output reasons", async () => {
   const reasons = [
     ApplicationBriefContextValidationError.REASON.INVALID_EVIDENCE_REFERENCE,

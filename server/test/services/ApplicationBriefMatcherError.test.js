@@ -33,6 +33,25 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
     "CLAIM_EVIDENCE_KIND_MISMATCH",
     "EVIDENCE_GLOBAL_LIMIT",
   ]);
+  assert.deepEqual(Object.values(ApplicationBriefMatcherError.VALIDATION_CATEGORY), [
+    "TEXT",
+    "IDENTIFIER_ITEM_ID",
+    "IDENTIFIER_FIELD",
+  ]);
+  assert.deepEqual(Object.values(ApplicationBriefMatcherError.VALIDATION_RULE), [
+    "TEXT_NOT_STRING",
+    "TEXT_BLANK",
+    "TEXT_TOO_LONG",
+    "ITEM_ID_NOT_STRING",
+    "ITEM_ID_EMPTY",
+    "ITEM_ID_TOO_LONG",
+    "ITEM_ID_INVALID_CHARSET",
+    "FIELD_NOT_STRING",
+    "FIELD_UNKNOWN_SCALAR",
+    "FIELD_INVALID_INDEXED_SYNTAX",
+    "FIELD_KIND_INCOMPATIBLE",
+    "FIELD_INDEX_OUT_OF_NORMATIVE_RANGE",
+  ]);
   const cause = new Error("private cause");
   const error = new ApplicationBriefMatcherError(
     ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
@@ -44,5 +63,44 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
   assert.deepEqual(error.safeDetails, {
     validationCode: null,
     validationSubcode: null,
+  });
+});
+
+test("matcher error retains only coherent closed structural diagnostics", () => {
+  const valid = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    null,
+    {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
+      validationPath: "supportedClaims[1].evidenceRefs[0].itemId",
+      validationCategory: "IDENTIFIER_ITEM_ID",
+      validationRule: "ITEM_ID_INVALID_CHARSET",
+    },
+  );
+  assert.deepEqual(valid.safeDetails, {
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
+    validationPath: "supportedClaims[1].evidenceRefs[0].itemId",
+    validationCategory: "IDENTIFIER_ITEM_ID",
+    validationRule: "ITEM_ID_INVALID_CHARSET",
+  });
+
+  const unsafe = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    null,
+    {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
+      validationPath: "supportedClaims[private].evidenceRefs[0].itemId",
+      validationCategory: "IDENTIFIER_ITEM_ID",
+      validationRule: "ITEM_ID_INVALID_CHARSET",
+    },
+  );
+  assert.deepEqual(unsafe.safeDetails, {
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
   });
 });
