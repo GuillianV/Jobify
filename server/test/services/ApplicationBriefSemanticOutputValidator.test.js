@@ -791,6 +791,82 @@ test("every cardinality predicate emits its exact closed rule", () => {
   }
 });
 
+test("every nested-shape predicate emits its exact closed rule", () => {
+  const cases = [
+    ["REQUIREMENT_MATCH_SHAPE", (output) => {
+      output.requirementMatches = [{ ...createMatch("SUPPORTED"), unknown: true }];
+    }],
+    ["SUPPORTED_FACET_SHAPE", (output) => {
+      const match = createMatch("SUPPORTED");
+      match.supportedFacets[0].unknown = true;
+      output.requirementMatches = [match];
+    }],
+    ["NOT_EVIDENCED_FACET_SHAPE", (output) => {
+      const match = createMatch("NOT_EVIDENCED");
+      match.notEvidencedFacets[0].unknown = true;
+      output.requirementMatches = [match];
+    }],
+    ["EMPHASIS_SHAPE", (output) => {
+      output.emphasis = [{
+        priority: "PRIMARY",
+        offerRefs: [structuredClone(ACTIVITY_REF)],
+        evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+        relevanceReason: "Relevant",
+        unknown: true,
+      }];
+    }],
+    ["SUPPORTED_CLAIM_SHAPE", (output) => {
+      output.supportedClaims = [{
+        claimType: "EXPERIENCE_FACT",
+        offerRefs: [structuredClone(REQUIREMENT_REF)],
+        evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+        unknown: true,
+      }];
+    }],
+    ["CAUTION_SHAPE", (output) => {
+      output.cautions = [{
+        kind: "DURATION_UNSUPPORTED",
+        offerRefs: [structuredClone(REQUIREMENT_REF)],
+        evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+        unknown: true,
+      }];
+    }],
+    ["OFFER_REF_INDEXED_SHAPE", (output) => {
+      output.emphasis = [{
+        priority: "PRIMARY",
+        offerRefs: [{ ...ACTIVITY_REF, unknown: true }],
+        evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+        relevanceReason: "Relevant",
+      }];
+    }],
+    ["OFFER_REF_SENIORITY_SHAPE", (output) => {
+      output.emphasis = [{
+        priority: "PRIMARY",
+        offerRefs: [{ kind: "SENIORITY", index: 0 }],
+        evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+        relevanceReason: "Relevant",
+      }];
+    }],
+    ["EVIDENCE_REF_SHAPE", (output) => {
+      output.emphasis = [{
+        priority: "PRIMARY",
+        offerRefs: [structuredClone(ACTIVITY_REF)],
+        evidenceRefs: [{ ...EXPERIENCE_REF, unknown: true }],
+        relevanceReason: "Relevant",
+      }];
+    }],
+  ];
+
+  assert.equal(cases.length, Object.keys(ApplicationBriefMatcherError.NESTED_SHAPE_RULE).length);
+  for (const [nestedShapeRule, mutate] of cases) {
+    const output = createEmptyOutput();
+    mutate(output);
+    expectInvalid(() => {
+      new ApplicationBriefSemanticOutputValidator().validate(output);
+    }, "NESTED_SHAPE_OR_KEYS", { nestedShapeRule });
+  }
+});
+
 test("normative collection ref and facet limits are enforced", () => {
   const cases = [
     ["requirementMatches", ApplicationBriefLimits.MAX_REQUIREMENT_MATCHES],

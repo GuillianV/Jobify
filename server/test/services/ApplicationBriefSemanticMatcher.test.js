@@ -256,6 +256,43 @@ test("parseable cardinality failure emits provider success and never retries", a
   )]);
 });
 
+test("parseable nested-shape failure emits provider success and never retries", async () => {
+  let calls = 0;
+  const logs = [];
+  const output = createOutput();
+  output.supportedClaims = [{
+    claimType: "EXPERIENCE_FACT",
+    offerRefs: [{ kind: "REQUIREMENT", index: 0 }],
+    evidenceRefs: [{ kind: "EXPERIENCE", itemId: "experience-1", field: "role" }],
+    unknown: true,
+  }];
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    return output;
+  }, ApplicationBriefSemanticMatcher.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
+    assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT);
+    assert.deepEqual(error.safeDetails, {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "NESTED_SHAPE_OR_KEYS",
+      nestedShapeRule: "SUPPORTED_CLAIM_SHAPE",
+    });
+    return true;
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(logs.map(JSON.parse), [createProviderSuccessEvent(
+    1,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    output,
+  )]);
+});
+
 test("json object transport output still passes through authoritative business validation", async () => {
   let calls = 0;
   const matcher = createMatcher(async () => {

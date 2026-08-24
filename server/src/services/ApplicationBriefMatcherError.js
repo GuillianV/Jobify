@@ -84,6 +84,18 @@ class ApplicationBriefMatcherError extends Error {
     CAUTION_EVIDENCE_REFS_MAX: "CAUTION_EVIDENCE_REFS_MAX",
   });
 
+  static NESTED_SHAPE_RULE = Object.freeze({
+    REQUIREMENT_MATCH_SHAPE: "REQUIREMENT_MATCH_SHAPE",
+    SUPPORTED_FACET_SHAPE: "SUPPORTED_FACET_SHAPE",
+    NOT_EVIDENCED_FACET_SHAPE: "NOT_EVIDENCED_FACET_SHAPE",
+    EMPHASIS_SHAPE: "EMPHASIS_SHAPE",
+    SUPPORTED_CLAIM_SHAPE: "SUPPORTED_CLAIM_SHAPE",
+    CAUTION_SHAPE: "CAUTION_SHAPE",
+    OFFER_REF_INDEXED_SHAPE: "OFFER_REF_INDEXED_SHAPE",
+    OFFER_REF_SENIORITY_SHAPE: "OFFER_REF_SENIORITY_SHAPE",
+    EVIDENCE_REF_SHAPE: "EVIDENCE_REF_SHAPE",
+  });
+
   /**
    * Create a matcher failure without retaining prompt or candidate content.
    * @param {string} code - Stable matcher failure code and safe message.
@@ -103,6 +115,7 @@ class ApplicationBriefMatcherError extends Error {
       safeDetails?.validationCategory,
       safeDetails?.validationRule,
       safeDetails?.cardinalityRule,
+      safeDetails?.nestedShapeRule,
     );
   }
 
@@ -114,6 +127,7 @@ class ApplicationBriefMatcherError extends Error {
    * @param {unknown} validationCategory - Closed field category candidate.
    * @param {unknown} validationRule - Closed deterministic rule candidate.
    * @param {unknown} cardinalityRule - Closed cardinality predicate candidate.
+   * @param {unknown} nestedShapeRule - Closed nested-shape predicate candidate.
    * @returns {object} Safe closed validation details.
    */
   static createSafeDetails(
@@ -123,6 +137,7 @@ class ApplicationBriefMatcherError extends Error {
     validationCategory,
     validationRule,
     cardinalityRule,
+    nestedShapeRule,
   ) {
     if (!Object.values(ApplicationBriefMatcherError.VALIDATION_CODE)
       .includes(validationCode)) {
@@ -149,6 +164,10 @@ class ApplicationBriefMatcherError extends Error {
     if (safeSubcode === this.SEMANTIC_VALIDATION_SUBCODE.CARDINALITY
       && Object.values(this.CARDINALITY_RULE).includes(cardinalityRule)) {
       details.cardinalityRule = cardinalityRule;
+    }
+    if (safeSubcode === this.SEMANTIC_VALIDATION_SUBCODE.NESTED_SHAPE_OR_KEYS
+      && Object.values(this.NESTED_SHAPE_RULE).includes(nestedShapeRule)) {
+      details.nestedShapeRule = nestedShapeRule;
     }
     return details;
   }

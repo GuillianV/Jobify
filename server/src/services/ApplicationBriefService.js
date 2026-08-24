@@ -208,6 +208,7 @@ class ApplicationBriefService {
         error.safeDetails?.validationCategory,
         error.safeDetails?.validationRule,
         error.safeDetails?.cardinalityRule,
+        error.safeDetails?.nestedShapeRule,
       );
     }
     const contextualSubcode = error.reason

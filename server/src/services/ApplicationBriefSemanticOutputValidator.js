@@ -47,6 +47,7 @@ const CLAIM_EVIDENCE_KIND = Object.freeze({
 });
 const SUBCODE = ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE;
 const CARDINALITY_RULE = ApplicationBriefMatcherError.CARDINALITY_RULE;
+const NESTED_SHAPE_RULE = ApplicationBriefMatcherError.NESTED_SHAPE_RULE;
 
 /**
  * Validates the strict semantic-only output accepted from the future matcher.
@@ -118,7 +119,12 @@ class ApplicationBriefSemanticOutputValidator {
     );
     const indices = new Set();
     for (const [matchIndex, match] of matches.entries()) {
-      this.requireExactObject(match, REQUIREMENT_MATCH_KEYS);
+      this.requireExactObject(
+        match,
+        REQUIREMENT_MATCH_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.REQUIREMENT_MATCH_SHAPE,
+      );
       this.validateOfferRef(match.offerRef, ApplicationBriefConstants.OFFER_REF_KIND.REQUIREMENT);
       if (indices.has(match.offerRef.index)) {
         this.fail(SUBCODE.DUPLICATE);
@@ -145,7 +151,12 @@ class ApplicationBriefSemanticOutputValidator {
     );
     const texts = new Set();
     for (const [facetIndex, facet] of facets.entries()) {
-      this.requireExactObject(facet, SUPPORTED_FACET_KEYS);
+      this.requireExactObject(
+        facet,
+        SUPPORTED_FACET_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.SUPPORTED_FACET_SHAPE,
+      );
       const path = `requirementMatches[${matchIndex}].supportedFacets[${facetIndex}]`;
       this.requireText(
         facet.text,
@@ -180,7 +191,12 @@ class ApplicationBriefSemanticOutputValidator {
     );
     const texts = new Set();
     for (const [facetIndex, facet] of facets.entries()) {
-      this.requireExactObject(facet, NOT_EVIDENCED_FACET_KEYS);
+      this.requireExactObject(
+        facet,
+        NOT_EVIDENCED_FACET_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.NOT_EVIDENCED_FACET_SHAPE,
+      );
       this.requireText(
         facet.text,
         OfferAnalysisLimits.MAXIMUM_VALUE_LENGTH,
@@ -254,7 +270,12 @@ class ApplicationBriefSemanticOutputValidator {
     );
     for (const [entryIndex, entry] of entries.entries()) {
       const path = `emphasis[${entryIndex}]`;
-      this.requireExactObject(entry, EMPHASIS_KEYS);
+      this.requireExactObject(
+        entry,
+        EMPHASIS_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.EMPHASIS_SHAPE,
+      );
       this.requireEnum(entry.priority, ApplicationBriefConstants.PRIORITY);
       this.validateOfferRefs(
         entry.offerRefs,
@@ -290,7 +311,12 @@ class ApplicationBriefSemanticOutputValidator {
     );
     const signatures = new Set();
     for (const [claimIndex, claim] of claims.entries()) {
-      this.requireExactObject(claim, SUPPORTED_CLAIM_KEYS);
+      this.requireExactObject(
+        claim,
+        SUPPORTED_CLAIM_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.SUPPORTED_CLAIM_SHAPE,
+      );
       this.requireEnum(claim.claimType, ApplicationBriefConstants.CLAIM_TYPE);
       this.validateOfferRefs(
         claim.offerRefs,
@@ -327,7 +353,12 @@ class ApplicationBriefSemanticOutputValidator {
     );
     const signatures = new Set();
     for (const [cautionIndex, caution] of cautions.entries()) {
-      this.requireExactObject(caution, CAUTION_KEYS);
+      this.requireExactObject(
+        caution,
+        CAUTION_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.CAUTION_SHAPE,
+      );
       this.requireEnum(caution.kind, ApplicationBriefConstants.CAUTION_KIND);
       this.validateOfferRefs(
         caution.offerRefs,
@@ -355,9 +386,19 @@ class ApplicationBriefSemanticOutputValidator {
   validateOfferRef(reference, requiredKind) {
     if (reference !== null && typeof reference === "object" && !Array.isArray(reference)
       && reference.kind === ApplicationBriefConstants.OFFER_REF_KIND.SENIORITY) {
-      this.requireExactObject(reference, SENIORITY_OFFER_REF_KEYS);
+      this.requireExactObject(
+        reference,
+        SENIORITY_OFFER_REF_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.OFFER_REF_SENIORITY_SHAPE,
+      );
     } else {
-      this.requireExactObject(reference, INDEXED_OFFER_REF_KEYS);
+      this.requireExactObject(
+        reference,
+        INDEXED_OFFER_REF_KEYS,
+        SUBCODE.NESTED_SHAPE_OR_KEYS,
+        NESTED_SHAPE_RULE.OFFER_REF_INDEXED_SHAPE,
+      );
       this.requireEnum(reference.kind, ApplicationBriefConstants.OFFER_REF_KIND);
       if (!Number.isSafeInteger(reference.index) || reference.index < 0) {
         this.fail(SUBCODE.TYPE);
@@ -425,7 +466,12 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   validateEvidenceRef(reference, path) {
-    this.requireExactObject(reference, EVIDENCE_REF_KEYS);
+    this.requireExactObject(
+      reference,
+      EVIDENCE_REF_KEYS,
+      SUBCODE.NESTED_SHAPE_OR_KEYS,
+      NESTED_SHAPE_RULE.EVIDENCE_REF_SHAPE,
+    );
     this.requireEnum(reference.kind, ApplicationBriefConstants.EVIDENCE_KIND);
     const categories = ApplicationBriefMatcherError.VALIDATION_CATEGORY;
     const rules = ApplicationBriefMatcherError.VALIDATION_RULE;
@@ -557,18 +603,24 @@ class ApplicationBriefSemanticOutputValidator {
    * @param {unknown} value - Object candidate.
    * @param {string[]} expectedKeys - Exact required keys.
    * @param {string} [subcode] - Closed shape category.
+   * @param {string} [nestedShapeRule] - Closed nested-shape predicate.
    * @returns {void}
    */
-  requireExactObject(value, expectedKeys, subcode = SUBCODE.NESTED_SHAPE_OR_KEYS) {
+  requireExactObject(
+    value,
+    expectedKeys,
+    subcode = SUBCODE.NESTED_SHAPE_OR_KEYS,
+    nestedShapeRule,
+  ) {
     if (value === null || typeof value !== "object" || Array.isArray(value)
       || Object.getPrototypeOf(value) !== Object.prototype) {
-      this.fail(subcode);
+      this.fail(subcode, undefined, undefined, undefined, undefined, nestedShapeRule);
     }
     const keys = Object.keys(value);
     if (keys.length !== expectedKeys.length || keys.some((key) => {
       return !expectedKeys.includes(key);
     })) {
-      this.fail(subcode);
+      this.fail(subcode, undefined, undefined, undefined, undefined, nestedShapeRule);
     }
   }
 
@@ -638,9 +690,17 @@ class ApplicationBriefSemanticOutputValidator {
    * @param {string} [validationCategory] - Closed field category.
    * @param {string} [validationRule] - Closed deterministic rule.
    * @param {string} [cardinalityRule] - Closed cardinality predicate.
+   * @param {string} [nestedShapeRule] - Closed nested-shape predicate.
    * @returns {never}
    */
-  fail(subcode, validationPath, validationCategory, validationRule, cardinalityRule) {
+  fail(
+    subcode,
+    validationPath,
+    validationCategory,
+    validationRule,
+    cardinalityRule,
+    nestedShapeRule,
+  ) {
     throw new ApplicationBriefMatcherError(
       ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
       ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
@@ -652,6 +712,7 @@ class ApplicationBriefSemanticOutputValidator {
         validationCategory,
         validationRule,
         cardinalityRule,
+        nestedShapeRule,
       },
     );
   }

@@ -58,6 +58,17 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
     "CAUTION_EVIDENCE_REFS_MIN_ONE",
     "CAUTION_EVIDENCE_REFS_MAX",
   ]);
+  assert.deepEqual(Object.values(ApplicationBriefMatcherError.NESTED_SHAPE_RULE), [
+    "REQUIREMENT_MATCH_SHAPE",
+    "SUPPORTED_FACET_SHAPE",
+    "NOT_EVIDENCED_FACET_SHAPE",
+    "EMPHASIS_SHAPE",
+    "SUPPORTED_CLAIM_SHAPE",
+    "CAUTION_SHAPE",
+    "OFFER_REF_INDEXED_SHAPE",
+    "OFFER_REF_SENIORITY_SHAPE",
+    "EVIDENCE_REF_SHAPE",
+  ]);
   assert.deepEqual(Object.values(ApplicationBriefMatcherError.VALIDATION_CATEGORY), [
     "TEXT",
     "IDENTIFIER_ITEM_ID",
@@ -167,5 +178,47 @@ test("matcher error retains cardinality rules only for cardinality failures", ()
       safeDetails,
     );
     assert.equal(Object.hasOwn(error.safeDetails, "cardinalityRule"), false);
+    assert.equal(Object.hasOwn(error.safeDetails, "nestedShapeRule"), false);
+  }
+});
+
+test("matcher error retains nested-shape rules only for nested-shape failures", () => {
+  const valid = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    null,
+    {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "NESTED_SHAPE_OR_KEYS",
+      nestedShapeRule: "SUPPORTED_CLAIM_SHAPE",
+      cardinalityRule: "ROOT_SUPPORTED_CLAIMS_MAX",
+    },
+  );
+  assert.deepEqual(valid.safeDetails, {
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "NESTED_SHAPE_OR_KEYS",
+    nestedShapeRule: "SUPPORTED_CLAIM_SHAPE",
+  });
+
+  for (const safeDetails of [{
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "NESTED_SHAPE_OR_KEYS",
+    nestedShapeRule: "private rule",
+  }, {
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "ENUM",
+    nestedShapeRule: "SUPPORTED_CLAIM_SHAPE",
+  }, {
+    validationCode: "CONTEXTUAL_VALIDATION",
+    validationSubcode: null,
+    nestedShapeRule: "SUPPORTED_CLAIM_SHAPE",
+  }]) {
+    const error = new ApplicationBriefMatcherError(
+      ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+      ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+      null,
+      safeDetails,
+    );
+    assert.equal(Object.hasOwn(error.safeDetails, "nestedShapeRule"), false);
   }
 });

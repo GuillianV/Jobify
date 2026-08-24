@@ -202,8 +202,8 @@ test("controller keeps matcher invalid-output diagnostics server-only", async ()
     null,
     {
       validationCode: "SEMANTIC_VALIDATION",
-      validationSubcode: "CARDINALITY",
-      cardinalityRule: "ROOT_EMPHASIS_MAX",
+      validationSubcode: "NESTED_SHAPE_OR_KEYS",
+      nestedShapeRule: "SUPPORTED_CLAIM_SHAPE",
     },
   );
   const harness = createHarness({ error });
