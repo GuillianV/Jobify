@@ -1,5 +1,3 @@
-import { ApplicationBriefConstants } from "./ApplicationBriefConstants.js";
-
 /**
  * Builds the strict Groq response format for ApplicationBrief semantic output.
  */
@@ -53,23 +51,19 @@ class ApplicationBriefSemanticJsonSchema {
    * @returns {object} Closed requirement match schema.
    */
   static createRequirementMatchSchema(supportedFacet) {
-    const requirementKind = ApplicationBriefConstants.OFFER_REF_KIND.REQUIREMENT;
     return {
       type: "object",
       properties: {
         offerRef: {
           type: "object",
           properties: {
-            kind: { type: "string", enum: [requirementKind] },
+            kind: { type: "string" },
             index: { type: "integer" },
           },
           required: ["kind", "index"],
           additionalProperties: false,
         },
-        state: {
-          type: "string",
-          enum: Object.values(ApplicationBriefConstants.EVIDENCE_STATE),
-        },
+        state: { type: "string" },
         supportedFacets: {
           type: "array",
           items: supportedFacet,
@@ -126,10 +120,7 @@ class ApplicationBriefSemanticJsonSchema {
     return {
       type: "object",
       properties: {
-        priority: {
-          type: "string",
-          enum: Object.values(ApplicationBriefConstants.PRIORITY),
-        },
+        priority: { type: "string" },
         offerRefs: { type: "array", items: offerReference },
         evidenceRefs: { type: "array", items: evidenceReference },
         relevanceReason: { type: "string" },
@@ -149,10 +140,7 @@ class ApplicationBriefSemanticJsonSchema {
     return {
       type: "object",
       properties: {
-        claimType: {
-          type: "string",
-          enum: Object.values(ApplicationBriefConstants.CLAIM_TYPE),
-        },
+        claimType: { type: "string" },
         offerRefs: { type: "array", items: offerReference },
         evidenceRefs: { type: "array", items: evidenceReference },
       },
@@ -171,10 +159,7 @@ class ApplicationBriefSemanticJsonSchema {
     return {
       type: "object",
       properties: {
-        kind: {
-          type: "string",
-          enum: Object.values(ApplicationBriefConstants.CAUTION_KIND),
-        },
+        kind: { type: "string" },
         offerRefs: { type: "array", items: offerReference },
         evidenceRefs: { type: "array", items: evidenceReference },
       },
@@ -188,16 +173,12 @@ class ApplicationBriefSemanticJsonSchema {
    * @returns {object} Closed offer reference union schema.
    */
   static createOfferReferenceSchema() {
-    const kinds = ApplicationBriefConstants.OFFER_REF_KIND;
     return {
       anyOf: [
         {
           type: "object",
           properties: {
-            kind: {
-              type: "string",
-              enum: [kinds.REQUIREMENT, kinds.ACTIVITY, kinds.CONTEXT],
-            },
+            kind: { type: "string" },
             index: { type: "integer" },
           },
           required: ["kind", "index"],
@@ -206,7 +187,7 @@ class ApplicationBriefSemanticJsonSchema {
         {
           type: "object",
           properties: {
-            kind: { type: "string", enum: [kinds.SENIORITY] },
+            kind: { type: "string" },
           },
           required: ["kind"],
           additionalProperties: false,
@@ -223,10 +204,7 @@ class ApplicationBriefSemanticJsonSchema {
     return {
       type: "object",
       properties: {
-        kind: {
-          type: "string",
-          enum: Object.values(ApplicationBriefConstants.EVIDENCE_KIND),
-        },
+        kind: { type: "string" },
         itemId: { type: "string" },
         field: { type: "string" },
       },

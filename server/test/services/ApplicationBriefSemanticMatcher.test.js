@@ -253,6 +253,46 @@ test("strict transport output still passes through authoritative business valida
   assert.equal(calls, 1);
 });
 
+test("provider-success output with an unknown enum is rejected locally without retry", async () => {
+  let calls = 0;
+  const logs = [];
+  const output = {
+    requirementMatches: [{
+      offerRef: { kind: "REQUIREMENT", index: 0 },
+      state: "UNKNOWN",
+      supportedFacets: [],
+      notEvidencedFacets: [{ text: "Requirement" }],
+    }],
+    emphasis: [],
+    supportedClaims: [],
+    cautions: [],
+  };
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    return output;
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
+    assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT);
+    assert.equal(
+      error.safeDetails.validationSubcode,
+      ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE.ENUM,
+    );
+    return true;
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(logs.map(JSON.parse), [createProviderSuccessEvent(
+    1,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    output,
+  )]);
+});
+
 test("recognized provider failures map to the closed matcher taxonomy", async () => {
   const mappings = [
     [GroqJsonClientError.CODE.UNAVAILABLE, ApplicationBriefMatcherError.CODE.UNAVAILABLE, null],
