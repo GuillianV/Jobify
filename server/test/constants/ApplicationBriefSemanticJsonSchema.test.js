@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ApplicationBriefConstants } from "../../src/constants/ApplicationBriefConstants.js";
 import { ApplicationBriefSemanticJsonSchema } from "../../src/constants/ApplicationBriefSemanticJsonSchema.js";
 
 const SUPPORTED_SCHEMA_KEYWORDS = new Set([
@@ -8,6 +9,7 @@ const SUPPORTED_SCHEMA_KEYWORDS = new Set([
   "required",
   "additionalProperties",
   "items",
+  "enum",
   "anyOf",
 ]);
 
@@ -70,7 +72,7 @@ test("schema recursively uses only the proven subset and closes every object", (
   assert.deepEqual(keywords, SUPPORTED_SCHEMA_KEYWORDS);
 });
 
-test("schema matches every nested semantic shape without provider enums", () => {
+test("schema matches every nested semantic shape and canonical enum", () => {
   const schema = createSchema();
   const requirementMatch = schema.properties.requirementMatches.items;
   const supportedFacet = requirementMatch.properties.supportedFacets.items;
@@ -93,11 +95,20 @@ test("schema matches every nested semantic shape without provider enums", () => 
   ]);
   assert.deepEqual(Object.keys(caution.properties), ["kind", "offerRefs", "evidenceRefs"]);
   assert.deepEqual(Object.keys(evidenceReference.properties), ["kind", "itemId", "field"]);
-  assert.deepEqual(requirementMatch.properties.state, { type: "string" });
-  assert.deepEqual(emphasis.properties.priority, { type: "string" });
-  assert.deepEqual(supportedClaim.properties.claimType, { type: "string" });
-  assert.deepEqual(caution.properties.kind, { type: "string" });
-  assert.deepEqual(evidenceReference.properties.kind, { type: "string" });
+  assert.deepEqual(
+    requirementMatch.properties.state.enum,
+    Object.values(ApplicationBriefConstants.EVIDENCE_STATE),
+  );
+  assert.deepEqual(emphasis.properties.priority.enum, Object.values(ApplicationBriefConstants.PRIORITY));
+  assert.deepEqual(
+    supportedClaim.properties.claimType.enum,
+    Object.values(ApplicationBriefConstants.CLAIM_TYPE),
+  );
+  assert.deepEqual(caution.properties.kind.enum, Object.values(ApplicationBriefConstants.CAUTION_KIND));
+  assert.deepEqual(
+    evidenceReference.properties.kind.enum,
+    Object.values(ApplicationBriefConstants.EVIDENCE_KIND),
+  );
 });
 
 test("schema distinguishes requirement and generic offer reference variants", () => {
@@ -105,15 +116,23 @@ test("schema distinguishes requirement and generic offer reference variants", ()
   const requirementReference = schema.properties.requirementMatches
     .items.properties.offerRef;
   assert.deepEqual(requirementReference.required, ["kind", "index"]);
-  assert.deepEqual(requirementReference.properties.kind, { type: "string" });
+  assert.deepEqual(requirementReference.properties.kind.enum, [
+    ApplicationBriefConstants.OFFER_REF_KIND.REQUIREMENT,
+  ]);
   assert.equal(requirementReference.properties.index.type, "integer");
 
   const variants = schema.properties.emphasis.items.properties.offerRefs.items.anyOf;
   assert.equal(variants.length, 2);
   assert.deepEqual(variants[0].required, ["kind", "index"]);
-  assert.deepEqual(variants[0].properties.kind, { type: "string" });
+  assert.deepEqual(variants[0].properties.kind.enum, [
+    ApplicationBriefConstants.OFFER_REF_KIND.REQUIREMENT,
+    ApplicationBriefConstants.OFFER_REF_KIND.ACTIVITY,
+    ApplicationBriefConstants.OFFER_REF_KIND.CONTEXT,
+  ]);
   assert.equal(variants[0].properties.index.type, "integer");
   assert.deepEqual(variants[1].required, ["kind"]);
-  assert.deepEqual(variants[1].properties.kind, { type: "string" });
+  assert.deepEqual(variants[1].properties.kind.enum, [
+    ApplicationBriefConstants.OFFER_REF_KIND.SENIORITY,
+  ]);
   assert.equal(Object.hasOwn(variants[1].properties, "index"), false);
 });
