@@ -3,6 +3,7 @@ import { GroqJsonClientError } from "./GroqJsonClientError.js";
 import { CoverLetterGeneratorError } from "./CoverLetterGeneratorError.js";
 
 const ROOT_KEYS = Object.freeze(["offer", "claims", "boundaries"]);
+const RATE_LIMIT_DIAGNOSTIC_EVENT = "cover_letter_provider_rate_limited";
 
 /**
  * Generates one validated CoverLetter from a minimal deterministic projection.
@@ -15,12 +16,14 @@ class CoverLetterGenerator {
    * @param {import("./GroqJsonClient.js").GroqJsonClient} dependencies.groqClient - JSON transport.
    * @param {import("./CoverLetterOutputValidator.js").CoverLetterOutputValidator} dependencies.outputValidator - CoverLetter output validator.
    * @param {object} dependencies.config - Generator execution configuration.
+   * @param {{warn: (message: string) => void}} [dependencies.logger=console] - Safe diagnostic logger.
    */
-  constructor({ promptBuilder, groqClient, outputValidator, config }) {
+  constructor({ promptBuilder, groqClient, outputValidator, config, logger = console }) {
     this.promptBuilder = promptBuilder;
     this.groqClient = groqClient;
     this.outputValidator = outputValidator;
     this.config = Object.freeze({ ...config });
+    this.logger = logger;
   }
 
   /**
@@ -235,7 +238,30 @@ class CoverLetterGenerator {
     if (code === undefined) {
       throw error;
     }
+    if (code === CoverLetterGeneratorError.CODE.RATE_LIMITED) {
+      this.logRateLimitDiagnostic(error);
+    }
     return new CoverLetterGeneratorError(code, error);
+  }
+
+  /**
+   * Emit one closed non-fatal diagnostic for terminal provider rate limiting.
+   * @param {GroqJsonClientError} error - Typed provider rate-limit failure.
+   * @returns {void}
+   */
+  logRateLimitDiagnostic(error) {
+    try {
+      const sanitized = GroqJsonClientError.createRateLimitSafeDetails(error.safeDetails);
+      const available = Object.fromEntries(Object.entries(sanitized).filter(([, value]) => {
+        return value !== null;
+      }));
+      this.logger.warn(JSON.stringify({
+        event: RATE_LIMIT_DIAGNOSTIC_EVENT,
+        ...available,
+      }));
+    } catch {
+      return;
+    }
   }
 
   /**

@@ -50,12 +50,14 @@ function createInput(indexes = [0, SECOND_INDEX, THIRD_INDEX]) {
 function createGenerator(
   completeJson,
   config = CoverLetterGenerator.buildConfig(MODEL),
+  logger = { warn() {} },
 ) {
   return new CoverLetterGenerator({
     promptBuilder: new CoverLetterPrompt(),
     groqClient: { completeJson },
     outputValidator: new CoverLetterOutputValidator(),
     config,
+    logger,
   });
 }
 
@@ -288,6 +290,162 @@ test("timeout rate limit and invalid output never receive a technical retry", as
     await expectCode(generator.generate(createInput([0])), expectedCode);
     assert.equal(calls, 1);
   }
+});
+
+test("terminal rate limit emits one event with all safe typed metadata", async () => {
+  let calls = 0;
+  const logs = [];
+  const rateLimitDetails = {
+    status: 429,
+    rateLimitTokenLimit: 12000,
+    rateLimitTokenRemaining: 8000,
+    rateLimitTokenResetMs: 1500,
+    rateLimitRequestLimit: 100,
+    rateLimitRequestRemaining: 80,
+    rateLimitRequestResetMs: 2500,
+    retryAfterMs: 3000,
+  };
+  const cause = new GroqJsonClientError(
+    GroqJsonClientError.CODE.RATE_LIMITED,
+    rateLimitDetails,
+  );
+  const generator = createGenerator(async () => {
+    calls += 1;
+    throw cause;
+  }, CoverLetterGenerator.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await assert.rejects(generator.generate(createInput([0])), (error) => {
+    assert.equal(error.code, CoverLetterGeneratorError.CODE.RATE_LIMITED);
+    assert.equal(error.cause, cause);
+    return true;
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(logs.map(JSON.parse), [{
+    event: "cover_letter_provider_rate_limited",
+    rateLimitTokenLimit: 12000,
+    rateLimitTokenRemaining: 8000,
+    rateLimitTokenResetMs: 1500,
+    rateLimitRequestLimit: 100,
+    rateLimitRequestRemaining: 80,
+    rateLimitRequestResetMs: 2500,
+    retryAfterMs: 3000,
+  }]);
+});
+
+test("rate-limit event preserves only available typed metadata without defaults", async () => {
+  const logs = [];
+  const generator = createGenerator(async () => {
+    throw new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED, {
+      status: 429,
+      rateLimitTokenRemaining: 8000,
+      retryAfterMs: 3000,
+    });
+  }, CoverLetterGenerator.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await expectCode(
+    generator.generate(createInput([0])),
+    CoverLetterGeneratorError.CODE.RATE_LIMITED,
+  );
+  assert.deepEqual(logs.map(JSON.parse), [{
+    event: "cover_letter_provider_rate_limited",
+    rateLimitTokenRemaining: 8000,
+    retryAfterMs: 3000,
+  }]);
+});
+
+test("rate-limit event discards invalid typed metadata", async () => {
+  const logs = [];
+  const generator = createGenerator(async () => {
+    throw new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED, {
+      status: 429,
+      rateLimitTokenLimit: "private",
+      rateLimitTokenRemaining: -1,
+      retryAfterMs: { private: true },
+      arbitrary: "private",
+    });
+  }, CoverLetterGenerator.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await expectCode(
+    generator.generate(createInput([0])),
+    CoverLetterGeneratorError.CODE.RATE_LIMITED,
+  );
+  assert.deepEqual(logs.map(JSON.parse), [{
+    event: "cover_letter_provider_rate_limited",
+  }]);
+});
+
+test("rate-limit event remains closed when no metadata is available", async () => {
+  const logs = [];
+  const generator = createGenerator(async () => {
+    throw new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED);
+  }, CoverLetterGenerator.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await expectCode(
+    generator.generate(createInput([0])),
+    CoverLetterGeneratorError.CODE.RATE_LIMITED,
+  );
+  assert.deepEqual(logs.map(JSON.parse), [{
+    event: "cover_letter_provider_rate_limited",
+  }]);
+});
+
+test("non-rate-limit failures never emit the rate-limit event", async () => {
+  for (const failure of [
+    new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED),
+    new GroqJsonClientError(GroqJsonClientError.CODE.TIMEOUT),
+    new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR),
+    new GroqJsonClientError(GroqJsonClientError.CODE.INVALID_RESPONSE),
+  ]) {
+    const logs = [];
+    const generator = createGenerator(async () => {
+      throw failure;
+    }, CoverLetterGenerator.buildConfig(MODEL), {
+      warn(value) {
+        logs.push(value);
+      },
+    });
+    await assert.rejects(generator.generate(createInput([0])));
+    assert.deepEqual(logs, []);
+  }
+});
+
+test("rate-limit logger failure never changes the terminal error", async () => {
+  let calls = 0;
+  const cause = new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED, {
+    status: 429,
+    retryAfterMs: 3000,
+  });
+  const generator = createGenerator(async () => {
+    calls += 1;
+    throw cause;
+  }, CoverLetterGenerator.buildConfig(MODEL), {
+    warn() {
+      throw new Error("logger unavailable");
+    },
+  });
+
+  await assert.rejects(generator.generate(createInput([0])), (error) => {
+    assert.equal(error.code, CoverLetterGeneratorError.CODE.RATE_LIMITED);
+    assert.equal(error.cause, cause);
+    return true;
+  });
+  assert.equal(calls, 1);
 });
 
 test("generator preserves input and output exactly without claim pre-filtering", async () => {
