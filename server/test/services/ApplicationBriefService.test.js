@@ -400,6 +400,19 @@ test("service logs terminal provider classes with closed typed rate-limit detail
   }
 });
 
+test("service does not misreport a local headroom skip as a provider response", async () => {
+  const expected = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.RATE_LIMITED,
+    ApplicationBriefMatcherError.REASON.RATE_LIMIT_HEADROOM_SKIP,
+  );
+  const harness = createHarness({ builderError: expected });
+
+  await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+    return error === expected;
+  });
+  assert.deepEqual(harness.calls.logs, []);
+});
+
 test("service neutralizes malformed provider details and an absent typed cause", async () => {
   const malformedCause = new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR);
   malformedCause.safeDetails = {

@@ -15,6 +15,7 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
   assert.deepEqual(Object.values(ApplicationBriefMatcherError.REASON), [
     "INVALID_SEMANTIC_OUTPUT",
     "INVALID_CONTEXTUAL_OUTPUT",
+    "CROSS_CLASS_RETRY_SKIPPED_TOKEN_HEADROOM",
   ]);
   assert.deepEqual(Object.values(ApplicationBriefMatcherError.VALIDATION_CODE), [
     "PROVIDER_INVALID_RESPONSE",

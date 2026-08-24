@@ -100,7 +100,9 @@ class ApplicationBriefService {
    */
   logProviderErrorDiagnostic(error) {
     if (!(error instanceof ApplicationBriefMatcherError)
-      || !this.isProviderDiagnosticError(error)) {
+      || !this.isProviderDiagnosticError(error)
+      || (error.code === ApplicationBriefMatcherError.CODE.RATE_LIMITED
+        && error.reason === ApplicationBriefMatcherError.REASON.RATE_LIMIT_HEADROOM_SKIP)) {
       return;
     }
     const details = this.resolveProviderErrorDetails(error);

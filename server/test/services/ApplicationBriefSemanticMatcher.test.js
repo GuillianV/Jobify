@@ -15,6 +15,7 @@ const HISTORICAL_MODEL = "llama-3.3-70b-versatile";
 const MAXIMUM_TECHNICAL_ATTEMPTS = 2;
 const MAXIMUM_CROSS_CLASS_ATTEMPTS = 3;
 const EXPECTED_RETRY_MAX_TOKENS = 3095;
+const EXPECTED_RETRY_TOKEN_BUDGET = 9999;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_CONTENT_TOO_LARGE = 413;
 const NULL_RATE_LIMIT_DETAILS = Object.freeze({
@@ -37,7 +38,7 @@ const RATE_LIMIT_DETAILS_A = Object.freeze({
 });
 const RATE_LIMIT_DETAILS_B = Object.freeze({
   rateLimitTokenLimit: 22000,
-  rateLimitTokenRemaining: 7000,
+  rateLimitTokenRemaining: 17000,
   rateLimitTokenResetMs: 3500,
   rateLimitRequestLimit: 200,
   rateLimitRequestRemaining: 60,
@@ -83,6 +84,19 @@ function createJsonValidationError(safeDetails = {}) {
     status: HTTP_BAD_REQUEST,
     providerType: "invalid_request_error",
     providerCode: "json_validate_failed",
+    ...safeDetails,
+  });
+}
+
+/**
+ * Build one recognized token-budget error with optional header-derived metadata.
+ * @param {object} [safeDetails] - Optional typed rate-limit details.
+ * @returns {GroqJsonClientError} Recognized token-budget error.
+ */
+function createTokenBudgetError(safeDetails = {}) {
+  return new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
+    limitTokens: 10000,
+    requestedTokens: 11000,
     ...safeDetails,
   });
 }
@@ -519,6 +533,152 @@ test("120B cross-class recovery reuses the exact reduced request and succeeds", 
       assert.equal(log.includes(forbidden), false);
     }
   }
+});
+
+test("insufficient Attempt-2 token headroom skips the final cross-class call locally", async () => {
+  const logs = [];
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw createTokenBudgetError({
+        rateLimitTokenRemaining: RATE_LIMIT_DETAILS_A.rateLimitTokenRemaining,
+      });
+    }
+    throw createJsonValidationError({
+      rateLimitTokenRemaining: 1,
+      rateLimitTokenResetMs: RATE_LIMIT_DETAILS_B.rateLimitTokenResetMs,
+      retryAfterMs: RATE_LIMIT_DETAILS_B.retryAfterMs,
+      message: "private provider message",
+      rawHeaders: { authorization: "private authorization" },
+      failed_generation: "private raw output",
+    });
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.RATE_LIMITED);
+    assert.equal(
+      error.reason,
+      ApplicationBriefMatcherError.REASON.RATE_LIMIT_HEADROOM_SKIP,
+    );
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+  const events = logs.map(JSON.parse);
+  assert.equal(events.length, MAXIMUM_TECHNICAL_ATTEMPTS);
+  assert.equal(events[0].retryReason, "TOKEN_BUDGET_413");
+  assert.deepEqual(events[1], {
+    event: "application_brief_semantic_matcher_cross_class_skip",
+    nextAttempt: MAXIMUM_CROSS_CLASS_ATTEMPTS,
+    decision: "CROSS_CLASS_RETRY_SKIPPED_TOKEN_HEADROOM",
+    rateLimitTokenRemaining: 1,
+    requiredTokenBudget: EXPECTED_RETRY_TOKEN_BUDGET,
+  });
+  assert.equal(events.some((event) => {
+    return event.retryReason === "JSON_VALIDATE_FAILED_AFTER_TOKEN_BUDGET_413";
+  }), false);
+  const serialized = JSON.stringify(events[1]);
+  for (const forbidden of [
+    "message", "private", "rawHeaders", "authorization", "failed_generation",
+    "rateLimitTokenResetMs", "retryAfterMs",
+  ]) {
+    assert.equal(serialized.includes(forbidden), false);
+  }
+});
+
+test("cross-class skip uses only Attempt-2 headroom and preserves sufficient fallback", async () => {
+  for (const remaining of [EXPECTED_RETRY_TOKEN_BUDGET, RATE_LIMIT_DETAILS_B.rateLimitTokenRemaining]) {
+    let calls = 0;
+    const requests = [];
+    const matcher = createMatcher(async (request) => {
+      calls += 1;
+      requests.push(structuredClone(request));
+      if (calls === 1) {
+        throw createTokenBudgetError({ rateLimitTokenRemaining: 0 });
+      }
+      if (calls === MAXIMUM_TECHNICAL_ATTEMPTS) {
+        throw createJsonValidationError({
+          rateLimitTokenRemaining: remaining,
+          rateLimitRequestRemaining: 0,
+        });
+      }
+      return createOutput();
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+    assert.deepEqual(await matcher.match({ offer: {}, candidate: {} }), createOutput());
+    assert.equal(calls, MAXIMUM_CROSS_CLASS_ATTEMPTS);
+    assert.deepEqual(requests[2], requests[1]);
+  }
+});
+
+test("Attempt-2 zero headroom skips despite sufficient Attempt-1 metadata", async () => {
+  let calls = 0;
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw createTokenBudgetError({
+        rateLimitTokenRemaining: RATE_LIMIT_DETAILS_B.rateLimitTokenRemaining,
+      });
+    }
+    throw createJsonValidationError({ rateLimitTokenRemaining: 0 });
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.RATE_LIMITED);
+    return true;
+  });
+  assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+});
+
+test("missing or invalid Attempt-2 token headroom preserves the final call", async () => {
+  for (const safeDetails of [{}, { rateLimitTokenRemaining: null }, {
+    rateLimitTokenRemaining: "1",
+  }, { rateLimitTokenRemaining: Number.MAX_SAFE_INTEGER + 1 }]) {
+    let calls = 0;
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw createTokenBudgetError();
+      }
+      if (calls === MAXIMUM_TECHNICAL_ATTEMPTS) {
+        throw createJsonValidationError(safeDetails);
+      }
+      return createOutput();
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+
+    assert.deepEqual(await matcher.match({ offer: {}, candidate: {} }), createOutput());
+    assert.equal(calls, MAXIMUM_CROSS_CLASS_ATTEMPTS);
+  }
+});
+
+test("required retry budget is derived from 413 metrics and invalid budgets fail open", () => {
+  const matcher = createMatcher(async () => {
+    return createOutput();
+  }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL));
+  const tokenError = createTokenBudgetError();
+
+  assert.equal(matcher.calculateExpectedRetryTokenBudget(
+    tokenError,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    EXPECTED_RETRY_MAX_TOKENS,
+  ), EXPECTED_RETRY_TOKEN_BUDGET);
+  for (const values of [
+    [tokenError, Number.NaN, EXPECTED_RETRY_MAX_TOKENS],
+    [tokenError, ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS, Number.NaN],
+    [new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED),
+      ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS, EXPECTED_RETRY_MAX_TOKENS],
+  ]) {
+    assert.equal(matcher.calculateExpectedRetryTokenBudget(...values), null);
+  }
+  assert.equal(matcher.shouldSkipCrossClassRetry(
+    createJsonValidationError({ rateLimitTokenRemaining: 0 }),
+    null,
+  ), false);
 });
 
 test("retry diagnostics preserve per-attempt rate-limit provenance and closed fields", async () => {

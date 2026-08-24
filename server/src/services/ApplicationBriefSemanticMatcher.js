@@ -10,6 +10,7 @@ const STRICT_STRUCTURED_OUTPUT_MODELS = new Set([
 ]);
 const LOW_REASONING_EFFORT = "low";
 const JSON_VALIDATION_RETRY_EVENT = "application_brief_semantic_matcher_retry";
+const CROSS_CLASS_SKIP_EVENT = "application_brief_semantic_matcher_cross_class_skip";
 
 /**
  * Performs one bounded LLM semantic match over a minimal projected input.
@@ -63,6 +64,7 @@ class ApplicationBriefSemanticMatcher {
         throw error;
       }
       let retryMaxTokens = initialMaxTokens;
+      let expectedRetryTokenBudget = null;
       let tokenBudgetRetry = false;
       if (this.isJsonValidationRetry(error)) {
         this.logJsonValidationRetry(error);
@@ -75,6 +77,11 @@ class ApplicationBriefSemanticMatcher {
             error,
           );
         }
+        expectedRetryTokenBudget = this.calculateExpectedRetryTokenBudget(
+          error,
+          initialMaxTokens,
+          retryMaxTokens,
+        );
         this.logTokenBudgetRetry(error, retryMaxTokens);
         tokenBudgetRetry = true;
       } else {
@@ -87,11 +94,54 @@ class ApplicationBriefSemanticMatcher {
           throw retryError;
         }
         if (tokenBudgetRetry && this.isJsonValidationRetry(retryError)) {
+          if (this.shouldSkipCrossClassRetry(retryError, expectedRetryTokenBudget)) {
+            this.logCrossClassSkip(retryError, expectedRetryTokenBudget);
+            throw new ApplicationBriefMatcherError(
+              ApplicationBriefMatcherError.CODE.RATE_LIMITED,
+              ApplicationBriefMatcherError.REASON.RATE_LIMIT_HEADROOM_SKIP,
+            );
+          }
           this.logCrossClassRetry(retryError, retryMaxTokens);
           return await this.requestFinalCrossClassOutput(prompts, retryMaxTokens);
         }
         throw this.mapGroqError(retryError);
       }
+    }
+  }
+
+  /**
+   * Determine whether typed Attempt-2 token headroom cannot fit the identical final request.
+   * @param {GroqJsonClientError} error - Targeted second-attempt JSON failure.
+   * @param {number|null} requiredTokenBudget - Derived reduced request budget.
+   * @returns {boolean} Whether the final cross-class request must be skipped.
+   */
+  shouldSkipCrossClassRetry(error, requiredTokenBudget) {
+    const remaining = error.safeDetails?.rateLimitTokenRemaining;
+    return this.config.model === ApplicationBriefMatcherConstants.JSON_VALIDATION_RETRY_MODEL
+      && Number.isSafeInteger(requiredTokenBudget)
+      && requiredTokenBudget > 0
+      && Number.isSafeInteger(remaining)
+      && remaining >= 0
+      && remaining < requiredTokenBudget;
+  }
+
+  /**
+   * Emit one closed diagnostic for a final cross-class request skipped locally.
+   * @param {GroqJsonClientError} error - Targeted second-attempt JSON failure.
+   * @param {number} requiredTokenBudget - Derived reduced request budget.
+   * @returns {void}
+   */
+  logCrossClassSkip(error, requiredTokenBudget) {
+    try {
+      this.logger.warn(JSON.stringify({
+        event: CROSS_CLASS_SKIP_EVENT,
+        nextAttempt: ApplicationBriefMatcherConstants.FINAL_CROSS_CLASS_RETRY_ATTEMPT,
+        decision: ApplicationBriefMatcherError.REASON.RATE_LIMIT_HEADROOM_SKIP,
+        rateLimitTokenRemaining: error.safeDetails.rateLimitTokenRemaining,
+        requiredTokenBudget,
+      }));
+    } catch {
+      return;
     }
   }
 
@@ -247,6 +297,28 @@ class ApplicationBriefSemanticMatcher {
       return null;
     }
     return retryMaxTokens;
+  }
+
+  /**
+   * Derive the complete token budget of the reduced request from recognized 413 metrics.
+   * @param {GroqJsonClientError} error - Recognized initial token-budget error.
+   * @param {number} currentMaxTokens - Rejected initial output ceiling.
+   * @param {number} retryMaxTokens - Validated reduced output ceiling.
+   * @returns {number|null} Safe positive reduced request budget or null.
+   */
+  calculateExpectedRetryTokenBudget(error, currentMaxTokens, retryMaxTokens) {
+    const requestedTokens = error.safeDetails?.requestedTokens;
+    const values = [requestedTokens, currentMaxTokens, retryMaxTokens];
+    if (!values.every((value) => {
+      return Number.isSafeInteger(value) && value > 0;
+    }) || requestedTokens <= currentMaxTokens) {
+      return null;
+    }
+    const promptTokens = requestedTokens - currentMaxTokens;
+    const requiredTokenBudget = promptTokens + retryMaxTokens;
+    return Number.isSafeInteger(requiredTokenBudget) && requiredTokenBudget > 0
+      ? requiredTokenBudget
+      : null;
   }
 
   /**

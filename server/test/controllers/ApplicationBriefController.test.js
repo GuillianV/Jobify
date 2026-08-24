@@ -120,6 +120,21 @@ test("controller maps every ApplicationBrief matcher failure", async () => {
   }
 });
 
+test("controller keeps the local headroom skip on the existing rate-limited contract", async () => {
+  const error = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.RATE_LIMITED,
+    ApplicationBriefMatcherError.REASON.RATE_LIMIT_HEADROOM_SKIP,
+  );
+  const harness = createHarness({ error });
+
+  await harness.controller.generateForOffer({ params: { id: String(OFFER_ID) } }, {});
+  assert.deepEqual(harness.state.error, {
+    statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+    message: "Application brief service is temporarily unavailable",
+    metadata: { code: "APPLICATION_BRIEF_RATE_LIMITED" },
+  });
+});
+
 test("controller maps OfferAnalyzer failures with the existing public taxonomy", async () => {
   const cases = [
     [OfferAnalyzerError.CODE.ANALYZER_INPUT_TOO_LARGE, HttpStatus.UNPROCESSABLE_ENTITY],
