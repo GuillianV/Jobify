@@ -73,6 +73,7 @@ class ApplicationBriefSemanticMatcher {
             error,
           );
         }
+        this.logTokenBudgetRetry(error, retryMaxTokens);
       } else {
         throw this.mapGroqError(error);
       }
@@ -114,6 +115,31 @@ class ApplicationBriefSemanticMatcher {
         status: error.safeDetails.status,
         providerType: error.safeDetails.providerType,
         providerCode: error.safeDetails.providerCode,
+      }));
+    } catch {
+      return;
+    }
+  }
+
+  /**
+   * Emit one closed diagnostic after a recognized token-budget retry is scheduled.
+   * @param {GroqJsonClientError} error - Recognized token-budget failure.
+   * @param {number} nextMaxTokens - Validated lower output ceiling.
+   * @returns {void}
+   */
+  logTokenBudgetRetry(error, nextMaxTokens) {
+    const constants = ApplicationBriefMatcherConstants;
+    try {
+      this.logger.warn(JSON.stringify({
+        event: JSON_VALIDATION_RETRY_EVENT,
+        nextAttempt: constants.RETRY_ATTEMPT,
+        retryReason: constants.TOKEN_BUDGET_RETRY_REASON,
+        status: constants.TOKEN_BUDGET_HTTP_STATUS,
+        providerType: constants.TOKEN_BUDGET_PROVIDER_TYPE,
+        providerCode: constants.TOKEN_BUDGET_PROVIDER_CODE,
+        limitTokens: error.safeDetails.limitTokens,
+        requestedTokens: error.safeDetails.requestedTokens,
+        nextMaxTokens,
       }));
     } catch {
       return;

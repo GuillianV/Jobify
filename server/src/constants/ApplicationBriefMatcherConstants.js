@@ -12,6 +12,14 @@ class ApplicationBriefMatcherConstants {
 
   static TOKEN_BUDGET_SAFETY_MARGIN = 1;
 
+  static TOKEN_BUDGET_HTTP_STATUS = 413;
+
+  static TOKEN_BUDGET_PROVIDER_TYPE = "tokens";
+
+  static TOKEN_BUDGET_PROVIDER_CODE = "rate_limit_exceeded";
+
+  static TOKEN_BUDGET_RETRY_REASON = "TOKEN_BUDGET_413";
+
   static JSON_VALIDATION_RETRY_MODEL = "openai/gpt-oss-120b";
 
   static JSON_VALIDATION_HTTP_STATUS = 400;

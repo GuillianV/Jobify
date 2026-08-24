@@ -15,6 +15,7 @@ const HISTORICAL_MODEL = "llama-3.3-70b-versatile";
 const MAXIMUM_TECHNICAL_ATTEMPTS = 2;
 const EXPECTED_RETRY_MAX_TOKENS = 3095;
 const HTTP_BAD_REQUEST = 400;
+const HTTP_CONTENT_TOO_LARGE = 413;
 
 /**
  * Build one valid empty semantic output.
@@ -205,6 +206,31 @@ test("recognized provider failures map to the closed matcher taxonomy", async ()
   }
 });
 
+test("success and initial rate limit never emit retry observability", async () => {
+  for (const outcome of [createOutput(), new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED)]) {
+    const logs = [];
+    let calls = 0;
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      if (outcome instanceof Error) {
+        throw outcome;
+      }
+      return outcome;
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+      warn(value) {
+        logs.push(value);
+      },
+    });
+    if (outcome instanceof Error) {
+      await assert.rejects(matcher.match({ offer: {}, candidate: {} }));
+    } else {
+      assert.deepEqual(await matcher.match({ offer: {}, candidate: {} }), createOutput());
+    }
+    assert.equal(calls, 1);
+    assert.deepEqual(logs, []);
+  }
+});
+
 test("120B retries exact json validation failure once with an identical request", async () => {
   const requests = [];
   const logs = [];
@@ -312,16 +338,23 @@ test("non-120B and non-target provider failures never use the targeted retry", a
 test("one technical token retry preserves strict schema and low reasoning", async () => {
   for (const model of [GPT_OSS_120B_MODEL, GPT_OSS_20B_MODEL]) {
     const requests = [];
+    const logs = [];
     const matcher = createMatcher(async (request) => {
       requests.push(structuredClone(request));
       if (requests.length === 1) {
         throw new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
           limitTokens: 10000,
           requestedTokens: 11000,
+          message: "private provider message",
+          failed_generation: "private raw output",
         });
       }
       return createOutput();
-    }, ApplicationBriefSemanticMatcher.buildConfig(model));
+    }, ApplicationBriefSemanticMatcher.buildConfig(model), {
+      warn(value) {
+        logs.push(value);
+      },
+    });
     const result = await matcher.match({ offer: {}, candidate: {} });
 
     assert.deepEqual(result, createOutput());
@@ -337,6 +370,90 @@ test("one technical token retry preserves strict schema and low reasoning", asyn
     );
     assert.equal(requests[0].reasoningEffort, "low");
     assert.equal(requests[1].reasoningEffort, "low");
+    assert.deepEqual(logs.map(JSON.parse), [{
+      event: "application_brief_semantic_matcher_retry",
+      nextAttempt: MAXIMUM_TECHNICAL_ATTEMPTS,
+      retryReason: "TOKEN_BUDGET_413",
+      status: HTTP_CONTENT_TOO_LARGE,
+      providerType: "tokens",
+      providerCode: "rate_limit_exceeded",
+      limitTokens: 10000,
+      requestedTokens: 11000,
+      nextMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+    }]);
+    for (const forbidden of [
+      "private provider message",
+      "private raw output",
+      "systemPrompt",
+      "userPrompt",
+      "candidate",
+      "offer",
+      "failed_generation",
+    ]) {
+      assert.equal(logs[0].includes(forbidden), false);
+    }
+  }
+});
+
+test("token retry event survives terminal json validation and rate-limit failures", async () => {
+  for (const [secondError, expectedCode] of [
+    [createJsonValidationError(), ApplicationBriefMatcherError.CODE.PROVIDER_ERROR],
+    [new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED),
+      ApplicationBriefMatcherError.CODE.RATE_LIMITED],
+  ]) {
+    const logs = [];
+    let calls = 0;
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
+          limitTokens: 10000,
+          requestedTokens: 11000,
+        });
+      }
+      throw secondError;
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+      warn(value) {
+        logs.push(value);
+      },
+    });
+
+    await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+      assert.equal(error.code, expectedCode);
+      return true;
+    });
+    assert.equal(calls, MAXIMUM_TECHNICAL_ATTEMPTS);
+    assert.equal(logs.length, 1);
+    assert.equal(JSON.parse(logs[0]).retryReason, "TOKEN_BUDGET_413");
+  }
+});
+
+test("unsafe or unrecognized token budgets never emit a retry event", async () => {
+  for (const error of [
+    new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {
+      limitTokens: 10000,
+      requestedTokens: 13000,
+    }),
+    new GroqJsonClientError(GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED, {}),
+    new GroqJsonClientError(GroqJsonClientError.CODE.HTTP_ERROR, {
+      status: HTTP_CONTENT_TOO_LARGE,
+      providerType: "tokens",
+      providerCode: "rate_limit_exceeded",
+    }),
+  ]) {
+    const logs = [];
+    let calls = 0;
+    const matcher = createMatcher(async () => {
+      calls += 1;
+      throw error;
+    }, ApplicationBriefSemanticMatcher.buildConfig(GPT_OSS_120B_MODEL), {
+      warn(value) {
+        logs.push(value);
+      },
+    });
+    await assert.rejects(matcher.match({ offer: {}, candidate: {} }));
+    assert.equal(calls, 1);
+    assert.deepEqual(logs, []);
   }
 });
 

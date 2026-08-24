@@ -8,5 +8,12 @@ test("matcher policy and bounded execution constants are exact", () => {
   assert.equal(ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS, 4096);
   assert.equal(ApplicationBriefMatcherConstants.MINIMUM_RETRY_OUTPUT_TOKENS, 2048);
   assert.equal(ApplicationBriefMatcherConstants.TOKEN_BUDGET_SAFETY_MARGIN, 1);
+  assert.equal(ApplicationBriefMatcherConstants.TOKEN_BUDGET_HTTP_STATUS, 413);
+  assert.equal(ApplicationBriefMatcherConstants.TOKEN_BUDGET_PROVIDER_TYPE, "tokens");
+  assert.equal(
+    ApplicationBriefMatcherConstants.TOKEN_BUDGET_PROVIDER_CODE,
+    "rate_limit_exceeded",
+  );
+  assert.equal(ApplicationBriefMatcherConstants.TOKEN_BUDGET_RETRY_REASON, "TOKEN_BUDGET_413");
   assert.equal(ApplicationBriefMatcherConstants.TIMEOUT_MS, 30000);
 });
