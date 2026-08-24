@@ -80,10 +80,23 @@ class ApplicationBriefPrompt {
       "Pour chaque supportedFacet, sélectionne la preuve existante la plus directe, précise et concrète.",
       "Ajoute une autre preuve uniquement si elle apporte une information complémentaire; ne remplis jamais artificiellement la limite.",
       "Favorise généralement une expérience ou un projet concret sur une déclaration Skill seule lorsque la preuve est plus riche, sans interdire une Skill pertinente.",
-      "Utilise uniquement des EvidenceRefs structurées exactement présentes dans la projection; ne recopie jamais une valeur candidate comme preuve libre.",
+      "Ne recopie jamais une valeur candidate comme preuve libre.",
       "supportedClaims est une sélection stratégique, pas une copie automatique de chaque facet soutenue.",
       `claimType utilise exactement ${this.formatEnum(ApplicationBriefConstants.CLAIM_TYPE)}.`,
       "Toutes les evidenceRefs d'un supportedClaim doivent suivre exactement ce mapping: EXPERIENCE_FACT -> EXPERIENCE; PROJECT_FACT -> PROJECT; SKILL_DECLARATION -> SKILL; EDUCATION_FACT -> EDUCATION; LANGUAGE_DECLARATION -> LANGUAGE; SOFT_SKILL_DECLARATION -> SOFT_SKILL.",
+    ].join("\n");
+    const evidenceFieldContract = [
+      "EVIDENCE_REF FIELD CONTRACT",
+      "field est un identifiant machine canonique, jamais du texte libre; seuls les noms du kind choisi sont permis:",
+      "EXPERIENCE=role|organization|client|startDate|endDate|current|domain|activities[i]|achievements[i]|technologies[i]",
+      "PROJECT=name|role|startDate|endDate|domain|summary|activities[i]|achievements[i]|technologies[i]",
+      "SKILL=category|value|detail",
+      "EDUCATION=diploma|level|field|institution|startDate|endDate",
+      "LANGUAGE=language|overall|reading|writing|speaking|listening",
+      "SOFT_SKILL=value|detail",
+      "Scalaire: copie exactement la propriété projetée; ne renomme, traduis, reformule, infère ni n'emploie d'alias.",
+      "Indexé, EXPERIENCE/PROJECT seulement: activities[i]|achievements[i]|technologies[i]; i est l'index zéro-based d'un élément projeté existant; le nom d'array nu est interdit.",
+      "Copie exactement kind et itemId. Référence seulement une valeur projetée existante non null; sinon, n'invente/substitue aucun field et ne crée ni evidenceRef ni claim.",
     ].join("\n");
     const emphasisAndCautions = [
       "EMPHASIS AND CAUTIONS",
@@ -121,6 +134,7 @@ class ApplicationBriefPrompt {
       outputContract,
       requirementRules,
       evidenceAndClaims,
+      evidenceFieldContract,
       emphasisAndCautions,
       prohibitedInferences,
       finalCheck,

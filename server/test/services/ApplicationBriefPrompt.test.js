@@ -76,6 +76,53 @@ test("prompt exposes every exact supported claim evidence kind mapping", () => {
   }
 });
 
+test("prompt defines the canonical EvidenceRef field vocabulary for every kind", () => {
+  const system = new ApplicationBriefPrompt().systemPrompt;
+  const contracts = [
+    "EXPERIENCE=role|organization|client|startDate|endDate|current|domain|activities[i]|achievements[i]|technologies[i]",
+    "PROJECT=name|role|startDate|endDate|domain|summary|activities[i]|achievements[i]|technologies[i]",
+    "SKILL=category|value|detail",
+    "EDUCATION=diploma|level|field|institution|startDate|endDate",
+    "LANGUAGE=language|overall|reading|writing|speaking|listening",
+    "SOFT_SKILL=value|detail",
+  ];
+  for (const contract of contracts) {
+    assert.equal(system.includes(contract), true, contract);
+  }
+  assert.equal(system.match(/EVIDENCE_REF FIELD CONTRACT/g)?.length, 1);
+});
+
+test("prompt distinguishes exact scalar copies from canonical indexed construction", () => {
+  const system = new ApplicationBriefPrompt().systemPrompt;
+
+  assert.equal(system.includes("Scalaire: copie exactement la propriété projetée"), true);
+  for (const action of ["renomme", "traduis", "reformule", "infère", "alias"]) {
+    assert.equal(system.includes(action), true, action);
+  }
+  assert.equal(system.includes("Indexé, EXPERIENCE/PROJECT seulement"), true);
+  assert.equal(system.includes("i est l'index zéro-based d'un élément projeté existant"), true);
+  assert.equal(system.includes("nom d'array nu est interdit"), true);
+});
+
+test("prompt makes EvidenceRef fields kind-specific and requires existing evidence", () => {
+  const system = new ApplicationBriefPrompt().systemPrompt;
+
+  assert.equal(system.includes("seuls les noms du kind choisi sont permis"), true);
+  assert.equal(system.includes("valeur projetée existante non null"), true);
+  assert.equal(system.includes("n'invente/substitue aucun field"), true);
+  assert.equal(system.includes("ne crée ni evidenceRef ni claim"), true);
+  assert.equal(system.includes("répare un alias"), false);
+});
+
+test("prompt field contract preserves claim semantics and hides validator internals", () => {
+  const system = new ApplicationBriefPrompt().systemPrompt;
+
+  assert.equal(system.includes("supportedClaims est une sélection stratégique"), true);
+  assert.equal(system.includes("MISSING_SUPPORTED_CLAIMS_WITH_POSITIVE_EVIDENCE"), false);
+  assert.equal(system.includes("FIELD_UNKNOWN_SCALAR"), false);
+  assert.equal(system.includes("TEXT_OR_IDENTIFIER_FORMAT"), false);
+});
+
 test("prompt makes every overclaim caution mandatory while preserving evidence-free output", () => {
   const system = new ApplicationBriefPrompt().systemPrompt;
   const mandatoryCautions = [
