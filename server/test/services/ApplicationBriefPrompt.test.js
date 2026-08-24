@@ -139,6 +139,13 @@ test("prompt makes every overclaim caution mandatory while preserving evidence-f
   assert.equal(system.includes("Sans aucune preuve Candidate, cautions vaut toujours []"), true);
 });
 
+test("prompt requires one to eight evidence refs for every emitted caution", () => {
+  const system = new ApplicationBriefPrompt().systemPrompt;
+
+  assert.equal(system.includes("pour chaque CAUTION émise, evidenceRefs n'est jamais vide"), true);
+  assert.equal(system.includes("Chaque array de refs contient au plus 8 refs uniques"), true);
+});
+
 test("prompt composite example uses only exact requirement substrings", () => {
   const system = new ApplicationBriefPrompt().systemPrompt;
   const requirement = "5 ans d'expérience avec React";

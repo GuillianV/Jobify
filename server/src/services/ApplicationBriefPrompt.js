@@ -57,7 +57,7 @@ class ApplicationBriefPrompt {
       "SUPPORTED_CLAIM exact keys: claimType, offerRefs, evidenceRefs. Aucun claim ou texte libre.",
       "CAUTION exact keys: kind, offerRefs, evidenceRefs. Aucun texte libre.",
       "EVIDENCE_REF exact keys: kind, itemId, field. Ne retourne jamais value, label, quote, reason ou confidence.",
-      `Chaque array de refs contient au plus ${ApplicationBriefLimits.MAX_REFS_PER_ITEM} refs uniques.`,
+      `Chaque array de refs contient au plus ${ApplicationBriefLimits.MAX_REFS_PER_ITEM} refs uniques; pour chaque CAUTION émise, evidenceRefs n'est jamais vide.`,
       `Chaque match contient au plus ${ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH} facets au total.`,
     ].join("\n");
     const requirementRules = [
