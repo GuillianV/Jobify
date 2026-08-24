@@ -2,6 +2,7 @@ import { ApplicationBriefMatcherConstants } from "../constants/ApplicationBriefM
 import { ApplicationBriefSemanticJsonSchema } from "../constants/ApplicationBriefSemanticJsonSchema.js";
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
 import { ApplicationBriefMatcherError } from "./ApplicationBriefMatcherError.js";
+import { ApplicationBriefProviderDiagnostics } from "./ApplicationBriefProviderDiagnostics.js";
 
 const STRICT_STRUCTURED_OUTPUT_MODELS = new Set([
   "openai/gpt-oss-120b",
@@ -121,6 +122,7 @@ class ApplicationBriefSemanticMatcher {
         status: error.safeDetails.status,
         providerType: error.safeDetails.providerType,
         providerCode: error.safeDetails.providerCode,
+        ...ApplicationBriefProviderDiagnostics.createRateLimitDetails(error.safeDetails),
       }));
     } catch {
       return;
@@ -146,6 +148,7 @@ class ApplicationBriefSemanticMatcher {
         limitTokens: error.safeDetails.limitTokens,
         requestedTokens: error.safeDetails.requestedTokens,
         nextMaxTokens,
+        ...ApplicationBriefProviderDiagnostics.createRateLimitDetails(error.safeDetails),
       }));
     } catch {
       return;
@@ -169,6 +172,7 @@ class ApplicationBriefSemanticMatcher {
         providerType: error.safeDetails.providerType,
         providerCode: error.safeDetails.providerCode,
         nextMaxTokens,
+        ...ApplicationBriefProviderDiagnostics.createRateLimitDetails(error.safeDetails),
       }));
     } catch {
       return;

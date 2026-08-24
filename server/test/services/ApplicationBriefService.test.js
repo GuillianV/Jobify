@@ -12,6 +12,24 @@ const SHA_256_HEX_LENGTH = 64;
 const SIGNING_SECRET_BYTES = 32;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_SERVER_ERROR = 500;
+const NULL_RATE_LIMIT_DETAILS = Object.freeze({
+  rateLimitTokenLimit: null,
+  rateLimitTokenRemaining: null,
+  rateLimitTokenResetMs: null,
+  rateLimitRequestLimit: null,
+  rateLimitRequestRemaining: null,
+  rateLimitRequestResetMs: null,
+  retryAfterMs: null,
+});
+const RATE_LIMIT_DETAILS = Object.freeze({
+  rateLimitTokenLimit: 12000,
+  rateLimitTokenRemaining: 8000,
+  rateLimitTokenResetMs: 1500,
+  rateLimitRequestLimit: 100,
+  rateLimitRequestRemaining: 80,
+  rateLimitRequestResetMs: 2500,
+  retryAfterMs: 3000,
+});
 
 /**
  * Build one service harness with observable injected collaborators.
@@ -270,6 +288,7 @@ test("service logs provider HTTP failures once with re-sanitized closed details"
       status,
       providerType,
       providerCode,
+      ...NULL_RATE_LIMIT_DETAILS,
     });
     const expected = new ApplicationBriefMatcherError(
       ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
@@ -287,8 +306,97 @@ test("service logs provider HTTP failures once with re-sanitized closed details"
       status,
       providerType,
       providerCode,
+      ...NULL_RATE_LIMIT_DETAILS,
     }]);
     assert.deepEqual(cause.safeDetails, causeSnapshot);
+  }
+});
+
+test("service logs terminal provider classes with closed typed rate-limit details", async () => {
+  const cases = [
+    [
+      ApplicationBriefMatcherError.CODE.RATE_LIMITED,
+      GroqJsonClientError.CODE.RATE_LIMITED,
+      { status: 429, ...RATE_LIMIT_DETAILS },
+      { status: 429, providerType: null, providerCode: null },
+    ],
+    [
+      ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+      GroqJsonClientError.CODE.HTTP_ERROR,
+      {
+        status: HTTP_BAD_REQUEST,
+        providerType: "invalid_request_error",
+        providerCode: "json_validate_failed",
+        ...RATE_LIMIT_DETAILS,
+      },
+      {
+        status: HTTP_BAD_REQUEST,
+        providerType: "invalid_request_error",
+        providerCode: "json_validate_failed",
+      },
+    ],
+    [
+      ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET,
+      GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED,
+      { limitTokens: 10000, requestedTokens: 11000, ...RATE_LIMIT_DETAILS },
+      { status: 413, providerType: "tokens", providerCode: "rate_limit_exceeded" },
+    ],
+    [
+      ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+      GroqJsonClientError.CODE.HTTP_ERROR,
+      {
+        status: HTTP_SERVER_ERROR,
+        providerType: "server_error",
+        providerCode: "provider_failure",
+        ...RATE_LIMIT_DETAILS,
+      },
+      {
+        status: HTTP_SERVER_ERROR,
+        providerType: "server_error",
+        providerCode: "provider_failure",
+      },
+    ],
+    [
+      ApplicationBriefMatcherError.CODE.UNAVAILABLE,
+      GroqJsonClientError.CODE.UNAVAILABLE,
+      { status: HTTP_SERVER_ERROR, ...RATE_LIMIT_DETAILS },
+      { status: HTTP_SERVER_ERROR, providerType: null, providerCode: null },
+    ],
+    [
+      ApplicationBriefMatcherError.CODE.TIMEOUT,
+      GroqJsonClientError.CODE.TIMEOUT,
+      RATE_LIMIT_DETAILS,
+      { status: null, providerType: null, providerCode: null },
+    ],
+  ];
+  for (const [matcherCode, transportCode, safeDetails, expectedHttp] of cases) {
+    const cause = new GroqJsonClientError(transportCode, {
+      ...safeDetails,
+      unknown: "private unknown",
+      message: "private provider message",
+      rawHeaders: { authorization: "private authorization" },
+      failed_generation: "private raw output",
+      candidate: "private candidate",
+      offer: "private offer",
+      prompt: "private prompt",
+    });
+    const expected = new ApplicationBriefMatcherError(matcherCode, null, cause);
+    const harness = createHarness({ builderError: expected });
+
+    await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (error) => {
+      return error === expected;
+    });
+    assert.deepEqual(harness.calls.logs.map(JSON.parse), [{
+      event: "application_brief_semantic_matcher_provider_error",
+      ...expectedHttp,
+      ...RATE_LIMIT_DETAILS,
+    }]);
+    for (const forbidden of [
+      "unknown", "private", "message", "rawHeaders", "authorization",
+      "failed_generation", "candidate", "offer", "prompt",
+    ]) {
+      assert.equal(harness.calls.logs[0].includes(forbidden), false);
+    }
   }
 });
 
@@ -317,6 +425,7 @@ test("service neutralizes malformed provider details and an absent typed cause",
       status: null,
       providerType: null,
       providerCode: null,
+      ...NULL_RATE_LIMIT_DETAILS,
     }]);
   }
 });
@@ -343,6 +452,7 @@ test("service rejects safe-looking metadata from a non-Groq cause", async () => 
     status: null,
     providerType: null,
     providerCode: null,
+    ...NULL_RATE_LIMIT_DETAILS,
   }]);
 });
 
@@ -367,10 +477,11 @@ test("service rejects safe-looking metadata from a non-HTTP Groq error", async (
     status: null,
     providerType: null,
     providerCode: null,
+    ...NULL_RATE_LIMIT_DETAILS,
   }]);
 });
 
-test("service leaves non-invalid-output failures unlogged", async () => {
+test("service leaves non-provider failures unlogged", async () => {
   const errors = [
     new ApplicationBriefContextValidationError(
       ApplicationBriefContextValidationError.REASON.STALE_INPUT,
@@ -378,10 +489,6 @@ test("service leaves non-invalid-output failures unlogged", async () => {
     new ApplicationBriefContextValidationError(
       ApplicationBriefContextValidationError.REASON.EVIDENCE_VALUE_MISMATCH,
     ),
-    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.RATE_LIMITED),
-    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.UNAVAILABLE),
-    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.TIMEOUT),
-    new ApplicationBriefMatcherError(ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET),
   ];
   for (const expected of errors) {
     const harness = createHarness({ builderError: expected });

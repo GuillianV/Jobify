@@ -1,5 +1,7 @@
+import { ApplicationBriefMatcherConstants } from "../constants/ApplicationBriefMatcherConstants.js";
 import { ApplicationBriefContextValidationError } from "./ApplicationBriefContextValidationError.js";
 import { ApplicationBriefMatcherError } from "./ApplicationBriefMatcherError.js";
+import { ApplicationBriefProviderDiagnostics } from "./ApplicationBriefProviderDiagnostics.js";
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
 
 const INVALID_OUTPUT_DIAGNOSTIC_EVENT = "application_brief_semantic_matcher_invalid_output";
@@ -98,7 +100,7 @@ class ApplicationBriefService {
    */
   logProviderErrorDiagnostic(error) {
     if (!(error instanceof ApplicationBriefMatcherError)
-      || error.code !== ApplicationBriefMatcherError.CODE.PROVIDER_ERROR) {
+      || !this.isProviderDiagnosticError(error)) {
       return;
     }
     const details = this.resolveProviderErrorDetails(error);
@@ -108,6 +110,7 @@ class ApplicationBriefService {
         status: details.status,
         providerType: details.providerType,
         providerCode: details.providerCode,
+        ...ApplicationBriefProviderDiagnostics.createRateLimitDetails(details),
       }));
     } catch {
       return;
@@ -117,19 +120,64 @@ class ApplicationBriefService {
   /**
    * Re-sanitize one typed provider cause into the canonical closed HTTP shape.
    * @param {ApplicationBriefMatcherError} error - Terminal provider failure.
-   * @returns {{status: number|null, providerType: string|null, providerCode: string|null}} Safe details.
+   * @returns {object} Safe closed provider details.
    */
   resolveProviderErrorDetails(error) {
     const cause = error.cause;
-    if (!(cause instanceof GroqJsonClientError)
-      || cause.code !== GroqJsonClientError.CODE.HTTP_ERROR) {
+    if (!(cause instanceof GroqJsonClientError)) {
       return GroqJsonClientError.createHttpSafeDetails();
     }
-    return GroqJsonClientError.createHttpSafeDetails(
-      cause.safeDetails?.status,
-      cause.safeDetails?.providerType,
-      cause.safeDetails?.providerCode,
-    );
+    if (cause.code === GroqJsonClientError.CODE.HTTP_ERROR) {
+      return GroqJsonClientError.createHttpSafeDetails(
+        cause.safeDetails?.status,
+        cause.safeDetails?.providerType,
+        cause.safeDetails?.providerCode,
+        cause.safeDetails,
+      );
+    }
+    if (cause.code === GroqJsonClientError.CODE.RATE_LIMITED) {
+      return GroqJsonClientError.createHttpSafeDetails(
+        cause.safeDetails?.status,
+        null,
+        null,
+        cause.safeDetails,
+      );
+    }
+    if (cause.code === GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED) {
+      const constants = ApplicationBriefMatcherConstants;
+      return GroqJsonClientError.createHttpSafeDetails(
+        constants.TOKEN_BUDGET_HTTP_STATUS,
+        constants.TOKEN_BUDGET_PROVIDER_TYPE,
+        constants.TOKEN_BUDGET_PROVIDER_CODE,
+        cause.safeDetails,
+      );
+    }
+    if (cause.code === GroqJsonClientError.CODE.UNAVAILABLE
+      || cause.code === GroqJsonClientError.CODE.TIMEOUT
+      || cause.code === GroqJsonClientError.CODE.AUTHENTICATION_ERROR) {
+      return GroqJsonClientError.createHttpSafeDetails(
+        cause.safeDetails?.status,
+        null,
+        null,
+        cause.safeDetails,
+      );
+    }
+    return GroqJsonClientError.createHttpSafeDetails();
+  }
+
+  /**
+   * Accept only matcher classifications backed by provider HTTP diagnostics.
+   * @param {ApplicationBriefMatcherError} error - Terminal matcher failure.
+   * @returns {boolean} Whether a terminal provider diagnostic is applicable.
+   */
+  isProviderDiagnosticError(error) {
+    return new Set([
+      ApplicationBriefMatcherError.CODE.PROVIDER_ERROR,
+      ApplicationBriefMatcherError.CODE.RATE_LIMITED,
+      ApplicationBriefMatcherError.CODE.PROVIDER_TOKEN_BUDGET,
+      ApplicationBriefMatcherError.CODE.UNAVAILABLE,
+      ApplicationBriefMatcherError.CODE.TIMEOUT,
+    ]).has(error.code);
   }
 
   /**
