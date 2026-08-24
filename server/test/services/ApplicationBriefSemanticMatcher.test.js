@@ -166,6 +166,10 @@ test("matcher detailed success retains one call actual budget and safe metadata"
       ...RATE_LIMIT_DETAILS_A,
     },
   });
+  assert.equal(Object.hasOwn(
+    result.providerExecution,
+    "successfulRequestTokenBudget",
+  ), false);
 });
 
 test("matcher detailed success retains reduced budget after recognized 413", async () => {
@@ -189,6 +193,7 @@ test("matcher detailed success retains reduced budget after recognized 413", asy
     {
       providerCallsMade: MAXIMUM_TECHNICAL_ATTEMPTS,
       successfulMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+      successfulRequestTokenBudget: EXPECTED_RETRY_TOKEN_BUDGET,
       ...RATE_LIMIT_DETAILS_B,
     },
   );
@@ -210,6 +215,10 @@ test("matcher detailed success counts json validation retry at the actual budget
     providerCallsMade: MAXIMUM_TECHNICAL_ATTEMPTS,
     successfulMaxTokens: ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
   });
+  assert.equal(Object.hasOwn(
+    result.providerExecution,
+    "successfulRequestTokenBudget",
+  ), false);
 });
 
 test("matcher detailed success counts special Attempt 3 without resetting reduced budget", async () => {
@@ -231,6 +240,7 @@ test("matcher detailed success counts special Attempt 3 without resetting reduce
   assert.deepEqual(result.providerExecution, {
     providerCallsMade: MAXIMUM_CROSS_CLASS_ATTEMPTS,
     successfulMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
+    successfulRequestTokenBudget: EXPECTED_RETRY_TOKEN_BUDGET,
   });
 });
 

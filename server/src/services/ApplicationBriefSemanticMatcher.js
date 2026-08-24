@@ -65,6 +65,10 @@ class ApplicationBriefSemanticMatcher {
       providerExecution: {
         providerCallsMade: result.providerCallsMade,
         successfulMaxTokens: result.successfulMaxTokens,
+        ...(Number.isSafeInteger(result.successfulRequestTokenBudget)
+          && result.successfulRequestTokenBudget > 0
+          ? { successfulRequestTokenBudget: result.successfulRequestTokenBudget }
+          : {}),
         ...result.safeRateLimitDetails,
       },
     };
@@ -103,6 +107,9 @@ class ApplicationBriefSemanticMatcher {
           initialMaxTokens,
           retryMaxTokens,
         );
+        if (expectedRetryTokenBudget !== null) {
+          execution.successfulRequestTokenBudget = expectedRetryTokenBudget;
+        }
         this.logTokenBudgetRetry(error, retryMaxTokens);
         tokenBudgetRetry = true;
       } else {
@@ -304,6 +311,10 @@ class ApplicationBriefSemanticMatcher {
       rawOutput: result.value,
       providerCallsMade: execution.providerCallsMade,
       successfulMaxTokens: maxTokens,
+      ...(Number.isSafeInteger(execution.successfulRequestTokenBudget)
+        && execution.successfulRequestTokenBudget > 0
+        ? { successfulRequestTokenBudget: execution.successfulRequestTokenBudget }
+        : {}),
       safeRateLimitDetails: { ...result.safeRateLimitDetails },
     };
   }
