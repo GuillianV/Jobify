@@ -18,6 +18,7 @@ const EXPECTED_RETRY_MAX_TOKENS = 3095;
 const EXPECTED_RETRY_TOKEN_BUDGET = 9999;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_CONTENT_TOO_LARGE = 413;
+const PROVIDER_SUCCESS_EVENT = "application_brief_semantic_matcher_provider_success";
 const NULL_RATE_LIMIT_DETAILS = Object.freeze({
   rateLimitTokenLimit: null,
   rateLimitTokenRemaining: null,
@@ -52,6 +53,22 @@ const RATE_LIMIT_DETAILS_B = Object.freeze({
  */
 function createOutput() {
   return { requirementMatches: [], emphasis: [], supportedClaims: [], cautions: [] };
+}
+
+/**
+ * Build the exact closed provider-success size diagnostic.
+ * @param {number} attempt - Successful provider attempt.
+ * @param {number} maxTokens - Exact completion cap used by the attempt.
+ * @param {object} [output] - Parsed semantic output.
+ * @returns {object} Expected safe event.
+ */
+function createProviderSuccessEvent(attempt, maxTokens, output = createOutput()) {
+  return {
+    event: PROVIDER_SUCCESS_EVENT,
+    attempt,
+    maxTokens,
+    semanticOutputJsonCharacters: JSON.stringify(output).length,
+  };
 }
 
 /**
@@ -186,9 +203,15 @@ test("input character budget accepts the exact limit and fails above without a c
 
 test("invalid semantic output fails once without semantic retry", async () => {
   let calls = 0;
+  const logs = [];
+  const output = { requirementMatches: [] };
   const matcher = createMatcher(async () => {
     calls += 1;
-    return { requirementMatches: [] };
+    return output;
+  }, ApplicationBriefSemanticMatcher.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
   });
   await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
     assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
@@ -196,6 +219,11 @@ test("invalid semantic output fails once without semantic retry", async () => {
     return true;
   });
   assert.equal(calls, 1);
+  assert.deepEqual(logs.map(JSON.parse), [createProviderSuccessEvent(
+    1,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    output,
+  )]);
 });
 
 test("strict transport output still passes through authoritative business validation", async () => {
@@ -250,7 +278,7 @@ test("recognized provider failures map to the closed matcher taxonomy", async ()
   }
 });
 
-test("success and initial rate limit never emit retry observability", async () => {
+test("initial provider success emits size observability while rate limit emits nothing", async () => {
   for (const outcome of [createOutput(), new GroqJsonClientError(GroqJsonClientError.CODE.RATE_LIMITED)]) {
     const logs = [];
     let calls = 0;
@@ -271,8 +299,73 @@ test("success and initial rate limit never emit retry observability", async () =
       assert.deepEqual(await matcher.match({ offer: {}, candidate: {} }), createOutput());
     }
     assert.equal(calls, 1);
-    assert.deepEqual(logs, []);
+    const expected = outcome instanceof Error ? [] : [createProviderSuccessEvent(
+      1,
+      ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    )];
+    assert.deepEqual(logs.map(JSON.parse), expected);
   }
+});
+
+test("provider-success diagnostic is closed and logger failure remains non-fatal", async () => {
+  const logs = [];
+  const output = createOutput();
+  const matcher = createMatcher(async () => {
+    return output;
+  }, ApplicationBriefSemanticMatcher.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  assert.deepEqual(await matcher.match({ offer: {}, candidate: {} }), output);
+  const event = JSON.parse(logs[0]);
+  assert.deepEqual(Object.keys(event), [
+    "event", "attempt", "maxTokens", "semanticOutputJsonCharacters",
+  ]);
+  assert.deepEqual(event, createProviderSuccessEvent(
+    1,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    output,
+  ));
+  for (const forbidden of [
+    "requirementMatches", "systemPrompt", "userPrompt", "providerPromptTokens",
+    "providerCompletionTokens", "providerTotalTokens", "usage", "choices",
+  ]) {
+    assert.equal(logs[0].includes(forbidden), false, forbidden);
+  }
+
+  const failingLoggerMatcher = createMatcher(async () => {
+    return output;
+  }, ApplicationBriefSemanticMatcher.buildConfig(MODEL), {
+    warn() {
+      throw new Error("logger failure");
+    },
+  });
+  assert.deepEqual(
+    await failingLoggerMatcher.match({ offer: {}, candidate: {} }),
+    output,
+  );
+});
+
+test("provider-success serialization failure is omitted without masking validation", async () => {
+  const logs = [];
+  const output = createOutput();
+  output.cautions = output;
+  const matcher = createMatcher(async () => {
+    return output;
+  }, ApplicationBriefSemanticMatcher.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
+    assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT);
+    return true;
+  });
+  assert.deepEqual(logs, []);
 });
 
 test("120B retries exact json validation failure once with an identical request", async () => {
@@ -300,7 +393,10 @@ test("120B retries exact json validation failure once with an identical request"
     providerType: "invalid_request_error",
     providerCode: "json_validate_failed",
     ...NULL_RATE_LIMIT_DETAILS,
-  }]);
+  }, createProviderSuccessEvent(
+    MAXIMUM_TECHNICAL_ATTEMPTS,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+  )]);
   assert.equal(logs[0].includes("systemPrompt"), false);
   assert.equal(logs[0].includes("userPrompt"), false);
 });
@@ -426,7 +522,10 @@ test("one technical token retry preserves strict schema and low reasoning", asyn
       requestedTokens: 11000,
       nextMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
       ...NULL_RATE_LIMIT_DETAILS,
-    }]);
+    }, createProviderSuccessEvent(
+      MAXIMUM_TECHNICAL_ATTEMPTS,
+      EXPECTED_RETRY_MAX_TOKENS,
+    )]);
     for (const forbidden of [
       "private provider message",
       "private raw output",
@@ -525,7 +624,10 @@ test("120B cross-class recovery reuses the exact reduced request and succeeds", 
     providerCode: "json_validate_failed",
     nextMaxTokens: EXPECTED_RETRY_MAX_TOKENS,
     ...NULL_RATE_LIMIT_DETAILS,
-  }]);
+  }, createProviderSuccessEvent(
+    MAXIMUM_CROSS_CLASS_ATTEMPTS,
+    EXPECTED_RETRY_MAX_TOKENS,
+  )]);
   for (const log of logs) {
     for (const forbidden of [
       "systemPrompt", "userPrompt", "candidate", "offer", "failed_generation",
@@ -802,7 +904,10 @@ test("initial JSON retry exposes only its own typed rate-limit metadata", async 
     providerType: "invalid_request_error",
     providerCode: "json_validate_failed",
     ...RATE_LIMIT_DETAILS_A,
-  }]);
+  }, createProviderSuccessEvent(
+    MAXIMUM_TECHNICAL_ATTEMPTS,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+  )]);
 });
 
 test("cross-class final errors win without a fourth call", async () => {

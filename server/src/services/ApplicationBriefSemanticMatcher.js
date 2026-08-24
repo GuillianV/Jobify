@@ -11,6 +11,8 @@ const STRICT_STRUCTURED_OUTPUT_MODELS = new Set([
 const LOW_REASONING_EFFORT = "low";
 const JSON_VALIDATION_RETRY_EVENT = "application_brief_semantic_matcher_retry";
 const CROSS_CLASS_SKIP_EVENT = "application_brief_semantic_matcher_cross_class_skip";
+const PROVIDER_SUCCESS_EVENT = "application_brief_semantic_matcher_provider_success";
+const INITIAL_ATTEMPT = 1;
 
 /**
  * Performs one bounded LLM semantic match over a minimal projected input.
@@ -58,7 +60,7 @@ class ApplicationBriefSemanticMatcher {
   async requestSemanticOutput(prompts) {
     const initialMaxTokens = this.config.maxTokens;
     try {
-      return await this.complete(prompts, initialMaxTokens);
+      return await this.complete(prompts, initialMaxTokens, INITIAL_ATTEMPT);
     } catch (error) {
       if (!(error instanceof GroqJsonClientError)) {
         throw error;
@@ -88,7 +90,11 @@ class ApplicationBriefSemanticMatcher {
         throw this.mapGroqError(error);
       }
       try {
-        return await this.complete(prompts, retryMaxTokens);
+        return await this.complete(
+          prompts,
+          retryMaxTokens,
+          ApplicationBriefMatcherConstants.RETRY_ATTEMPT,
+        );
       } catch (retryError) {
         if (!(retryError instanceof GroqJsonClientError)) {
           throw retryError;
@@ -237,7 +243,11 @@ class ApplicationBriefSemanticMatcher {
    */
   async requestFinalCrossClassOutput(prompts, maxTokens) {
     try {
-      return await this.complete(prompts, maxTokens);
+      return await this.complete(
+        prompts,
+        maxTokens,
+        ApplicationBriefMatcherConstants.FINAL_CROSS_CLASS_RETRY_ATTEMPT,
+      );
     } catch (error) {
       if (!(error instanceof GroqJsonClientError)) {
         throw error;
@@ -250,9 +260,10 @@ class ApplicationBriefSemanticMatcher {
    * Submit one JSON completion with explicit injected settings.
    * @param {{systemPrompt: string, userPrompt: string}} prompts - Exact prompts.
    * @param {number} maxTokens - Attempt output ceiling.
+   * @param {number} attempt - Exact provider attempt number.
    * @returns {Promise<unknown>} Parsed provider JSON.
    */
-  async complete(prompts, maxTokens) {
+  async complete(prompts, maxTokens, attempt) {
     const request = {
       ...prompts,
       model: this.config.model,
@@ -263,7 +274,35 @@ class ApplicationBriefSemanticMatcher {
       request.responseFormat = ApplicationBriefSemanticJsonSchema.createResponseFormat();
       request.reasoningEffort = LOW_REASONING_EFFORT;
     }
-    return await this.groqClient.completeJson(request);
+    const output = await this.groqClient.completeJson(request);
+    this.logProviderSuccess(output, attempt, maxTokens);
+    return output;
+  }
+
+  /**
+   * Emit one closed non-fatal size diagnostic after provider JSON parsing succeeds.
+   * @param {unknown} output - Parsed provider semantic output.
+   * @param {number} attempt - Exact successful provider attempt number.
+   * @param {number} maxTokens - Completion ceiling used by the successful attempt.
+   * @returns {void}
+   */
+  logProviderSuccess(output, attempt, maxTokens) {
+    try {
+      const serialized = JSON.stringify(output);
+      const semanticOutputJsonCharacters = serialized.length;
+      if (!Number.isSafeInteger(semanticOutputJsonCharacters)
+        || semanticOutputJsonCharacters < 0) {
+        return;
+      }
+      this.logger.warn(JSON.stringify({
+        event: PROVIDER_SUCCESS_EVENT,
+        attempt,
+        maxTokens,
+        semanticOutputJsonCharacters,
+      }));
+    } catch {
+      return;
+    }
   }
 
   /**
