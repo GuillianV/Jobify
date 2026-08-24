@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ApplicationBriefLimits } from "../../src/constants/ApplicationBriefLimits.js";
 import { ApplicationBriefMatcherConstants } from "../../src/constants/ApplicationBriefMatcherConstants.js";
 import { ApplicationBriefMatcherError } from "../../src/services/ApplicationBriefMatcherError.js";
 import { ApplicationBriefPrompt } from "../../src/services/ApplicationBriefPrompt.js";
@@ -213,6 +214,38 @@ test("invalid semantic output fails once without semantic retry", async () => {
   await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
     assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
     assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT);
+    return true;
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(logs.map(JSON.parse), [createProviderSuccessEvent(
+    1,
+    ApplicationBriefMatcherConstants.MAX_OUTPUT_TOKENS,
+    output,
+  )]);
+});
+
+test("parseable cardinality failure emits provider success and never retries", async () => {
+  let calls = 0;
+  const logs = [];
+  const output = createOutput();
+  output.emphasis = Array(ApplicationBriefLimits.MAX_EMPHASIS + 1).fill(null);
+  const matcher = createMatcher(async () => {
+    calls += 1;
+    return output;
+  }, ApplicationBriefSemanticMatcher.buildConfig(MODEL), {
+    warn(value) {
+      logs.push(value);
+    },
+  });
+
+  await assert.rejects(matcher.match({ offer: {}, candidate: {} }), (error) => {
+    assert.equal(error.code, ApplicationBriefMatcherError.CODE.INVALID_OUTPUT);
+    assert.equal(error.reason, ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT);
+    assert.deepEqual(error.safeDetails, {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "CARDINALITY",
+      cardinalityRule: "ROOT_EMPHASIS_MAX",
+    });
     return true;
   });
   assert.equal(calls, 1);

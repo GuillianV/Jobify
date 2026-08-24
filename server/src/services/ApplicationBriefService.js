@@ -207,6 +207,7 @@ class ApplicationBriefService {
         error.safeDetails?.validationPath,
         error.safeDetails?.validationCategory,
         error.safeDetails?.validationRule,
+        error.safeDetails?.cardinalityRule,
       );
     }
     const contextualSubcode = error.reason

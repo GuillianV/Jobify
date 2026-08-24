@@ -58,6 +58,32 @@ class ApplicationBriefMatcherError extends Error {
     EVIDENCE_GLOBAL_LIMIT: "EVIDENCE_GLOBAL_LIMIT",
   });
 
+  static CARDINALITY_RULE = Object.freeze({
+    ROOT_REQUIREMENT_MATCHES_MAX: "ROOT_REQUIREMENT_MATCHES_MAX",
+    ROOT_EMPHASIS_MAX: "ROOT_EMPHASIS_MAX",
+    ROOT_SUPPORTED_CLAIMS_MAX: "ROOT_SUPPORTED_CLAIMS_MAX",
+    ROOT_CAUTIONS_MAX: "ROOT_CAUTIONS_MAX",
+    REQUIREMENT_SUPPORTED_FACETS_MAX: "REQUIREMENT_SUPPORTED_FACETS_MAX",
+    REQUIREMENT_NOT_EVIDENCED_FACETS_MAX: "REQUIREMENT_NOT_EVIDENCED_FACETS_MAX",
+    REQUIREMENT_COMBINED_FACETS_MAX: "REQUIREMENT_COMBINED_FACETS_MAX",
+    REQUIREMENT_UNIQUE_SUPPORTED_EVIDENCE_REFS_MAX:
+      "REQUIREMENT_UNIQUE_SUPPORTED_EVIDENCE_REFS_MAX",
+    SUPPORTED_FACET_EVIDENCE_REFS_MIN_ONE: "SUPPORTED_FACET_EVIDENCE_REFS_MIN_ONE",
+    SUPPORTED_FACET_EVIDENCE_REFS_MAX: "SUPPORTED_FACET_EVIDENCE_REFS_MAX",
+    EMPHASIS_OFFER_REFS_MIN_ONE: "EMPHASIS_OFFER_REFS_MIN_ONE",
+    EMPHASIS_OFFER_REFS_MAX: "EMPHASIS_OFFER_REFS_MAX",
+    EMPHASIS_EVIDENCE_REFS_MIN_ONE: "EMPHASIS_EVIDENCE_REFS_MIN_ONE",
+    EMPHASIS_EVIDENCE_REFS_MAX: "EMPHASIS_EVIDENCE_REFS_MAX",
+    SUPPORTED_CLAIM_OFFER_REFS_MIN_ONE: "SUPPORTED_CLAIM_OFFER_REFS_MIN_ONE",
+    SUPPORTED_CLAIM_OFFER_REFS_MAX: "SUPPORTED_CLAIM_OFFER_REFS_MAX",
+    SUPPORTED_CLAIM_EVIDENCE_REFS_MIN_ONE: "SUPPORTED_CLAIM_EVIDENCE_REFS_MIN_ONE",
+    SUPPORTED_CLAIM_EVIDENCE_REFS_MAX: "SUPPORTED_CLAIM_EVIDENCE_REFS_MAX",
+    CAUTION_OFFER_REFS_MIN_ONE: "CAUTION_OFFER_REFS_MIN_ONE",
+    CAUTION_OFFER_REFS_MAX: "CAUTION_OFFER_REFS_MAX",
+    CAUTION_EVIDENCE_REFS_MIN_ONE: "CAUTION_EVIDENCE_REFS_MIN_ONE",
+    CAUTION_EVIDENCE_REFS_MAX: "CAUTION_EVIDENCE_REFS_MAX",
+  });
+
   /**
    * Create a matcher failure without retaining prompt or candidate content.
    * @param {string} code - Stable matcher failure code and safe message.
@@ -76,6 +102,7 @@ class ApplicationBriefMatcherError extends Error {
       safeDetails?.validationPath,
       safeDetails?.validationCategory,
       safeDetails?.validationRule,
+      safeDetails?.cardinalityRule,
     );
   }
 
@@ -86,6 +113,7 @@ class ApplicationBriefMatcherError extends Error {
    * @param {unknown} validationPath - Closed structural output path candidate.
    * @param {unknown} validationCategory - Closed field category candidate.
    * @param {unknown} validationRule - Closed deterministic rule candidate.
+   * @param {unknown} cardinalityRule - Closed cardinality predicate candidate.
    * @returns {object} Safe closed validation details.
    */
   static createSafeDetails(
@@ -94,6 +122,7 @@ class ApplicationBriefMatcherError extends Error {
     validationPath,
     validationCategory,
     validationRule,
+    cardinalityRule,
   ) {
     if (!Object.values(ApplicationBriefMatcherError.VALIDATION_CODE)
       .includes(validationCode)) {
@@ -116,6 +145,10 @@ class ApplicationBriefMatcherError extends Error {
       details.validationPath = validationPath;
       details.validationCategory = validationCategory;
       details.validationRule = validationRule;
+    }
+    if (safeSubcode === this.SEMANTIC_VALIDATION_SUBCODE.CARDINALITY
+      && Object.values(this.CARDINALITY_RULE).includes(cardinalityRule)) {
+      details.cardinalityRule = cardinalityRule;
     }
     return details;
   }

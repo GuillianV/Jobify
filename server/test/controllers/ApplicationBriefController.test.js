@@ -200,7 +200,11 @@ test("controller keeps matcher invalid-output diagnostics server-only", async ()
     ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
     ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
     null,
-    { validationCode: "SEMANTIC_VALIDATION", validationSubcode: "TYPE" },
+    {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "CARDINALITY",
+      cardinalityRule: "ROOT_EMPHASIS_MAX",
+    },
   );
   const harness = createHarness({ error });
   await harness.controller.generateForOffer({ params: { id: String(OFFER_ID) } }, {});

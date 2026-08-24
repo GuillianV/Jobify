@@ -12,6 +12,7 @@ const ACTIVITY_REF = Object.freeze({ kind: "ACTIVITY", index: 0 });
 const EXPERIENCE_REF = Object.freeze({
   kind: "EXPERIENCE", itemId: "experience-1", field: "role",
 });
+const CARDINALITY_FACET_SPLIT = 4;
 
 /**
  * Build one valid empty semantic output.
@@ -80,7 +81,9 @@ test("semantic validator attaches closed diagnostics to representative failures"
       return {};
     },
   );
-  cases.push([excessive, "CARDINALITY"]);
+  cases.push([excessive, "CARDINALITY", {
+    cardinalityRule: "ROOT_EMPHASIS_MAX",
+  }]);
 
   const duplicate = createEmptyOutput();
   duplicate.requirementMatches = [createMatch("SUPPORTED"), createMatch("SUPPORTED")];
@@ -99,10 +102,10 @@ test("semantic validator attaches closed diagnostics to representative failures"
   }];
   cases.push([claimMismatch, "CLAIM_EVIDENCE_KIND_MISMATCH"]);
 
-  for (const [candidate, subcode] of cases) {
+  for (const [candidate, subcode, details] of cases) {
     expectInvalid(() => {
       new ApplicationBriefSemanticOutputValidator().validate(candidate);
-    }, subcode);
+    }, subcode, details);
   }
 });
 
@@ -545,7 +548,9 @@ test("match-wide evidence union enforces its limit and counts shared refs once",
   });
   expectInvalid(() => {
     new ApplicationBriefSemanticOutputValidator().validate(excessive);
-  }, "CARDINALITY");
+  }, "CARDINALITY", {
+    cardinalityRule: "REQUIREMENT_UNIQUE_SUPPORTED_EVIDENCE_REFS_MAX",
+  });
 });
 
 test("global evidence union enforces the final fact limit and counts cross-root refs once", () => {
@@ -599,6 +604,191 @@ test("global evidence union enforces the final fact limit and counts cross-root 
   expectInvalid(() => {
     new ApplicationBriefSemanticOutputValidator().validate(excessive);
   }, "EVIDENCE_GLOBAL_LIMIT");
+});
+
+test("every cardinality predicate emits its exact closed rule", () => {
+  const limit = ApplicationBriefLimits;
+  /**
+   * Build unique valid evidence references.
+   * @param {number} count - Requested reference count.
+   * @returns {object[]} Evidence references.
+   */
+  function createEvidenceRefs(count) {
+    return Array.from({ length: count }, (_, index) => {
+      return { kind: "EXPERIENCE", itemId: `experience-${index}`, field: "role" };
+    });
+  }
+  /**
+   * Build unique valid offer references.
+   * @param {number} count - Requested reference count.
+   * @returns {object[]} Offer references.
+   */
+  function createOfferRefs(count) {
+    return Array.from({ length: count }, (_, index) => {
+      return { kind: "ACTIVITY", index };
+    });
+  }
+  /**
+   * Build one valid emphasis entry.
+   * @returns {object} Emphasis entry.
+   */
+  function createEmphasis() {
+    return {
+      priority: "PRIMARY",
+      offerRefs: [structuredClone(ACTIVITY_REF)],
+      evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+      relevanceReason: "Relevant",
+    };
+  }
+  /**
+   * Build one valid supported claim.
+   * @returns {object} Supported claim.
+   */
+  function createClaim() {
+    return {
+      claimType: "EXPERIENCE_FACT",
+      offerRefs: [structuredClone(REQUIREMENT_REF)],
+      evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+    };
+  }
+  /**
+   * Build one valid caution.
+   * @returns {object} Caution.
+   */
+  function createCaution() {
+    return {
+      kind: "DURATION_UNSUPPORTED",
+      offerRefs: [structuredClone(REQUIREMENT_REF)],
+      evidenceRefs: [structuredClone(EXPERIENCE_REF)],
+    };
+  }
+  const cases = [
+    ["ROOT_REQUIREMENT_MATCHES_MAX", (output) => {
+      output.requirementMatches = Array(limit.MAX_REQUIREMENT_MATCHES + 1).fill(null);
+    }],
+    ["ROOT_EMPHASIS_MAX", (output) => {
+      output.emphasis = Array(limit.MAX_EMPHASIS + 1).fill(null);
+    }],
+    ["ROOT_SUPPORTED_CLAIMS_MAX", (output) => {
+      output.supportedClaims = Array(limit.MAX_SUPPORTED_CLAIMS + 1).fill(null);
+    }],
+    ["ROOT_CAUTIONS_MAX", (output) => {
+      output.cautions = Array(limit.MAX_CAUTIONS + 1).fill(null);
+    }],
+    ["REQUIREMENT_SUPPORTED_FACETS_MAX", (output) => {
+      const match = createMatch("SUPPORTED");
+      match.supportedFacets = Array(limit.MAX_FACETS_PER_REQUIREMENT_MATCH + 1).fill(null);
+      output.requirementMatches = [match];
+    }],
+    ["REQUIREMENT_NOT_EVIDENCED_FACETS_MAX", (output) => {
+      const match = createMatch("NOT_EVIDENCED");
+      match.notEvidencedFacets = Array(limit.MAX_FACETS_PER_REQUIREMENT_MATCH + 1).fill(null);
+      output.requirementMatches = [match];
+    }],
+    ["REQUIREMENT_COMBINED_FACETS_MAX", (output) => {
+      const match = createMatch("PARTIALLY_SUPPORTED");
+      match.supportedFacets = Array.from({ length: CARDINALITY_FACET_SPLIT }, (_, index) => {
+        return { text: `supported-${index}`, evidenceRefs: [structuredClone(EXPERIENCE_REF)] };
+      });
+      match.notEvidencedFacets = Array.from({
+        length: limit.MAX_FACETS_PER_REQUIREMENT_MATCH - CARDINALITY_FACET_SPLIT + 1,
+      }, (_, index) => {
+        return { text: `missing-${index}` };
+      });
+      output.requirementMatches = [match];
+    }],
+    ["REQUIREMENT_UNIQUE_SUPPORTED_EVIDENCE_REFS_MAX", (output) => {
+      const references = createEvidenceRefs(limit.MAX_EVIDENCE_REFS_PER_ITEM + 1);
+      output.requirementMatches = [{
+        offerRef: structuredClone(REQUIREMENT_REF),
+        state: "SUPPORTED",
+        supportedFacets: [
+          { text: "first", evidenceRefs: references.slice(0, CARDINALITY_FACET_SPLIT) },
+          { text: "second", evidenceRefs: references.slice(CARDINALITY_FACET_SPLIT) },
+        ],
+        notEvidencedFacets: [],
+      }];
+    }],
+    ["SUPPORTED_FACET_EVIDENCE_REFS_MIN_ONE", (output) => {
+      const match = createMatch("SUPPORTED");
+      match.supportedFacets[0].evidenceRefs = [];
+      output.requirementMatches = [match];
+    }],
+    ["SUPPORTED_FACET_EVIDENCE_REFS_MAX", (output) => {
+      const match = createMatch("SUPPORTED");
+      match.supportedFacets[0].evidenceRefs = createEvidenceRefs(limit.MAX_REFS_PER_ITEM + 1);
+      output.requirementMatches = [match];
+    }],
+    ["EMPHASIS_OFFER_REFS_MIN_ONE", (output) => {
+      const emphasis = createEmphasis();
+      emphasis.offerRefs = [];
+      output.emphasis = [emphasis];
+    }],
+    ["EMPHASIS_OFFER_REFS_MAX", (output) => {
+      const emphasis = createEmphasis();
+      emphasis.offerRefs = createOfferRefs(limit.MAX_REFS_PER_ITEM + 1);
+      output.emphasis = [emphasis];
+    }],
+    ["EMPHASIS_EVIDENCE_REFS_MIN_ONE", (output) => {
+      const emphasis = createEmphasis();
+      emphasis.evidenceRefs = [];
+      output.emphasis = [emphasis];
+    }],
+    ["EMPHASIS_EVIDENCE_REFS_MAX", (output) => {
+      const emphasis = createEmphasis();
+      emphasis.evidenceRefs = createEvidenceRefs(limit.MAX_REFS_PER_ITEM + 1);
+      output.emphasis = [emphasis];
+    }],
+    ["SUPPORTED_CLAIM_OFFER_REFS_MIN_ONE", (output) => {
+      const claim = createClaim();
+      claim.offerRefs = [];
+      output.supportedClaims = [claim];
+    }],
+    ["SUPPORTED_CLAIM_OFFER_REFS_MAX", (output) => {
+      const claim = createClaim();
+      claim.offerRefs = createOfferRefs(limit.MAX_REFS_PER_ITEM + 1);
+      output.supportedClaims = [claim];
+    }],
+    ["SUPPORTED_CLAIM_EVIDENCE_REFS_MIN_ONE", (output) => {
+      const claim = createClaim();
+      claim.evidenceRefs = [];
+      output.supportedClaims = [claim];
+    }],
+    ["SUPPORTED_CLAIM_EVIDENCE_REFS_MAX", (output) => {
+      const claim = createClaim();
+      claim.evidenceRefs = createEvidenceRefs(limit.MAX_REFS_PER_ITEM + 1);
+      output.supportedClaims = [claim];
+    }],
+    ["CAUTION_OFFER_REFS_MIN_ONE", (output) => {
+      const caution = createCaution();
+      caution.offerRefs = [];
+      output.cautions = [caution];
+    }],
+    ["CAUTION_OFFER_REFS_MAX", (output) => {
+      const caution = createCaution();
+      caution.offerRefs = createOfferRefs(limit.MAX_REFS_PER_ITEM + 1);
+      output.cautions = [caution];
+    }],
+    ["CAUTION_EVIDENCE_REFS_MIN_ONE", (output) => {
+      const caution = createCaution();
+      caution.evidenceRefs = [];
+      output.cautions = [caution];
+    }],
+    ["CAUTION_EVIDENCE_REFS_MAX", (output) => {
+      const caution = createCaution();
+      caution.evidenceRefs = createEvidenceRefs(limit.MAX_REFS_PER_ITEM + 1);
+      output.cautions = [caution];
+    }],
+  ];
+
+  assert.equal(cases.length, Object.keys(ApplicationBriefMatcherError.CARDINALITY_RULE).length);
+  for (const [cardinalityRule, mutate] of cases) {
+    const output = createEmptyOutput();
+    mutate(output);
+    expectInvalid(() => {
+      new ApplicationBriefSemanticOutputValidator().validate(output);
+    }, "CARDINALITY", { cardinalityRule });
+  }
 });
 
 test("normative collection ref and facet limits are enforced", () => {

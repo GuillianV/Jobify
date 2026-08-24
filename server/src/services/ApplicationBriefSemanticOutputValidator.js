@@ -46,6 +46,7 @@ const CLAIM_EVIDENCE_KIND = Object.freeze({
   SOFT_SKILL_DECLARATION: ApplicationBriefConstants.EVIDENCE_KIND.SOFT_SKILL,
 });
 const SUBCODE = ApplicationBriefMatcherError.SEMANTIC_VALIDATION_SUBCODE;
+const CARDINALITY_RULE = ApplicationBriefMatcherError.CARDINALITY_RULE;
 
 /**
  * Validates the strict semantic-only output accepted from the future matcher.
@@ -110,7 +111,11 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   validateRequirementMatches(matches) {
-    this.requireArray(matches, ApplicationBriefLimits.MAX_REQUIREMENT_MATCHES);
+    this.requireArray(
+      matches,
+      ApplicationBriefLimits.MAX_REQUIREMENT_MATCHES,
+      CARDINALITY_RULE.ROOT_REQUIREMENT_MATCHES_MAX,
+    );
     const indices = new Set();
     for (const [matchIndex, match] of matches.entries()) {
       this.requireExactObject(match, REQUIREMENT_MATCH_KEYS);
@@ -133,7 +138,11 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   validateSupportedFacets(facets, matchIndex) {
-    this.requireArray(facets, ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH);
+    this.requireArray(
+      facets,
+      ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH,
+      CARDINALITY_RULE.REQUIREMENT_SUPPORTED_FACETS_MAX,
+    );
     const texts = new Set();
     for (const [facetIndex, facet] of facets.entries()) {
       this.requireExactObject(facet, SUPPORTED_FACET_KEYS);
@@ -147,7 +156,13 @@ class ApplicationBriefSemanticOutputValidator {
         this.fail(SUBCODE.DUPLICATE);
       }
       texts.add(facet.text);
-      this.validateEvidenceRefs(facet.evidenceRefs, true, `${path}.evidenceRefs`);
+      this.validateEvidenceRefs(
+        facet.evidenceRefs,
+        true,
+        `${path}.evidenceRefs`,
+        CARDINALITY_RULE.SUPPORTED_FACET_EVIDENCE_REFS_MAX,
+        CARDINALITY_RULE.SUPPORTED_FACET_EVIDENCE_REFS_MIN_ONE,
+      );
     }
   }
 
@@ -158,7 +173,11 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   validateNotEvidencedFacets(facets, matchIndex) {
-    this.requireArray(facets, ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH);
+    this.requireArray(
+      facets,
+      ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH,
+      CARDINALITY_RULE.REQUIREMENT_NOT_EVIDENCED_FACETS_MAX,
+    );
     const texts = new Set();
     for (const [facetIndex, facet] of facets.entries()) {
       this.requireExactObject(facet, NOT_EVIDENCED_FACET_KEYS);
@@ -183,7 +202,13 @@ class ApplicationBriefSemanticOutputValidator {
     const supportedCount = match.supportedFacets.length;
     const missingCount = match.notEvidencedFacets.length;
     if (supportedCount + missingCount > ApplicationBriefLimits.MAX_FACETS_PER_REQUIREMENT_MATCH) {
-      this.fail(SUBCODE.CARDINALITY);
+      this.fail(
+        SUBCODE.CARDINALITY,
+        undefined,
+        undefined,
+        undefined,
+        CARDINALITY_RULE.REQUIREMENT_COMBINED_FACETS_MAX,
+      );
     }
     if (match.supportedFacets.some((supported) => {
       return match.notEvidencedFacets.some((missing) => {
@@ -206,7 +231,13 @@ class ApplicationBriefSemanticOutputValidator {
       }
     }
     if (references.size > ApplicationBriefLimits.MAX_EVIDENCE_REFS_PER_ITEM) {
-      this.fail(SUBCODE.CARDINALITY);
+      this.fail(
+        SUBCODE.CARDINALITY,
+        undefined,
+        undefined,
+        undefined,
+        CARDINALITY_RULE.REQUIREMENT_UNIQUE_SUPPORTED_EVIDENCE_REFS_MAX,
+      );
     }
   }
 
@@ -216,13 +247,28 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   validateEmphasis(entries) {
-    this.requireArray(entries, ApplicationBriefLimits.MAX_EMPHASIS);
+    this.requireArray(
+      entries,
+      ApplicationBriefLimits.MAX_EMPHASIS,
+      CARDINALITY_RULE.ROOT_EMPHASIS_MAX,
+    );
     for (const [entryIndex, entry] of entries.entries()) {
       const path = `emphasis[${entryIndex}]`;
       this.requireExactObject(entry, EMPHASIS_KEYS);
       this.requireEnum(entry.priority, ApplicationBriefConstants.PRIORITY);
-      this.validateOfferRefs(entry.offerRefs, true);
-      this.validateEvidenceRefs(entry.evidenceRefs, true, `${path}.evidenceRefs`);
+      this.validateOfferRefs(
+        entry.offerRefs,
+        true,
+        CARDINALITY_RULE.EMPHASIS_OFFER_REFS_MAX,
+        CARDINALITY_RULE.EMPHASIS_OFFER_REFS_MIN_ONE,
+      );
+      this.validateEvidenceRefs(
+        entry.evidenceRefs,
+        true,
+        `${path}.evidenceRefs`,
+        CARDINALITY_RULE.EMPHASIS_EVIDENCE_REFS_MAX,
+        CARDINALITY_RULE.EMPHASIS_EVIDENCE_REFS_MIN_ONE,
+      );
       this.requireText(
         entry.relevanceReason,
         ApplicationBriefLimits.MAX_RELEVANCE_REASON_LENGTH,
@@ -237,16 +283,27 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   validateSupportedClaims(claims) {
-    this.requireArray(claims, ApplicationBriefLimits.MAX_SUPPORTED_CLAIMS);
+    this.requireArray(
+      claims,
+      ApplicationBriefLimits.MAX_SUPPORTED_CLAIMS,
+      CARDINALITY_RULE.ROOT_SUPPORTED_CLAIMS_MAX,
+    );
     const signatures = new Set();
     for (const [claimIndex, claim] of claims.entries()) {
       this.requireExactObject(claim, SUPPORTED_CLAIM_KEYS);
       this.requireEnum(claim.claimType, ApplicationBriefConstants.CLAIM_TYPE);
-      this.validateOfferRefs(claim.offerRefs, true);
+      this.validateOfferRefs(
+        claim.offerRefs,
+        true,
+        CARDINALITY_RULE.SUPPORTED_CLAIM_OFFER_REFS_MAX,
+        CARDINALITY_RULE.SUPPORTED_CLAIM_OFFER_REFS_MIN_ONE,
+      );
       this.validateEvidenceRefs(
         claim.evidenceRefs,
         true,
         `supportedClaims[${claimIndex}].evidenceRefs`,
+        CARDINALITY_RULE.SUPPORTED_CLAIM_EVIDENCE_REFS_MAX,
+        CARDINALITY_RULE.SUPPORTED_CLAIM_EVIDENCE_REFS_MIN_ONE,
       );
       if (claim.evidenceRefs.some((reference) => {
         return reference.kind !== CLAIM_EVIDENCE_KIND[claim.claimType];
@@ -263,16 +320,27 @@ class ApplicationBriefSemanticOutputValidator {
    * @returns {void}
    */
   validateCautions(cautions) {
-    this.requireArray(cautions, ApplicationBriefLimits.MAX_CAUTIONS);
+    this.requireArray(
+      cautions,
+      ApplicationBriefLimits.MAX_CAUTIONS,
+      CARDINALITY_RULE.ROOT_CAUTIONS_MAX,
+    );
     const signatures = new Set();
     for (const [cautionIndex, caution] of cautions.entries()) {
       this.requireExactObject(caution, CAUTION_KEYS);
       this.requireEnum(caution.kind, ApplicationBriefConstants.CAUTION_KIND);
-      this.validateOfferRefs(caution.offerRefs, true);
+      this.validateOfferRefs(
+        caution.offerRefs,
+        true,
+        CARDINALITY_RULE.CAUTION_OFFER_REFS_MAX,
+        CARDINALITY_RULE.CAUTION_OFFER_REFS_MIN_ONE,
+      );
       this.validateEvidenceRefs(
         caution.evidenceRefs,
         true,
         `cautions[${cautionIndex}].evidenceRefs`,
+        CARDINALITY_RULE.CAUTION_EVIDENCE_REFS_MAX,
+        CARDINALITY_RULE.CAUTION_EVIDENCE_REFS_MIN_ONE,
       );
       this.rejectDuplicateSignature(signatures, caution);
     }
@@ -304,12 +372,14 @@ class ApplicationBriefSemanticOutputValidator {
    * Validate bounded unique offer references.
    * @param {unknown} references - Offer reference candidates.
    * @param {boolean} nonEmpty - Whether the collection must be non-empty.
+   * @param {string} maximumRule - Closed maximum cardinality rule.
+   * @param {string} minimumRule - Closed non-empty cardinality rule.
    * @returns {void}
    */
-  validateOfferRefs(references, nonEmpty) {
-    this.requireArray(references, ApplicationBriefLimits.MAX_REFS_PER_ITEM);
+  validateOfferRefs(references, nonEmpty, maximumRule, minimumRule) {
+    this.requireArray(references, ApplicationBriefLimits.MAX_REFS_PER_ITEM, maximumRule);
     if (nonEmpty && references.length === 0) {
-      this.fail(SUBCODE.CARDINALITY);
+      this.fail(SUBCODE.CARDINALITY, undefined, undefined, undefined, minimumRule);
     }
     const keys = new Set();
     for (const reference of references) {
@@ -328,12 +398,14 @@ class ApplicationBriefSemanticOutputValidator {
    * @param {unknown} references - Evidence reference candidates.
    * @param {boolean} nonEmpty - Whether the collection must be non-empty.
    * @param {string} path - Closed structural collection path.
+   * @param {string} maximumRule - Closed maximum cardinality rule.
+   * @param {string} minimumRule - Closed non-empty cardinality rule.
    * @returns {void}
    */
-  validateEvidenceRefs(references, nonEmpty, path) {
-    this.requireArray(references, ApplicationBriefLimits.MAX_REFS_PER_ITEM);
+  validateEvidenceRefs(references, nonEmpty, path, maximumRule, minimumRule) {
+    this.requireArray(references, ApplicationBriefLimits.MAX_REFS_PER_ITEM, maximumRule);
     if (nonEmpty && references.length === 0) {
-      this.fail(SUBCODE.CARDINALITY);
+      this.fail(SUBCODE.CARDINALITY, undefined, undefined, undefined, minimumRule);
     }
     const keys = new Set();
     for (const [referenceIndex, reference] of references.entries()) {
@@ -504,14 +576,15 @@ class ApplicationBriefSemanticOutputValidator {
    * Require one bounded array.
    * @param {unknown} value - Array candidate.
    * @param {number} maximum - Inclusive maximum length.
+   * @param {string} cardinalityRule - Closed maximum cardinality rule.
    * @returns {void}
    */
-  requireArray(value, maximum) {
+  requireArray(value, maximum, cardinalityRule) {
     if (!Array.isArray(value)) {
       this.fail(SUBCODE.TYPE);
     }
     if (value.length > maximum) {
-      this.fail(SUBCODE.CARDINALITY);
+      this.fail(SUBCODE.CARDINALITY, undefined, undefined, undefined, cardinalityRule);
     }
   }
 
@@ -564,9 +637,10 @@ class ApplicationBriefSemanticOutputValidator {
    * @param {string} [validationPath] - Closed structural output path.
    * @param {string} [validationCategory] - Closed field category.
    * @param {string} [validationRule] - Closed deterministic rule.
+   * @param {string} [cardinalityRule] - Closed cardinality predicate.
    * @returns {never}
    */
-  fail(subcode, validationPath, validationCategory, validationRule) {
+  fail(subcode, validationPath, validationCategory, validationRule, cardinalityRule) {
     throw new ApplicationBriefMatcherError(
       ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
       ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
@@ -577,6 +651,7 @@ class ApplicationBriefSemanticOutputValidator {
         validationPath,
         validationCategory,
         validationRule,
+        cardinalityRule,
       },
     );
   }

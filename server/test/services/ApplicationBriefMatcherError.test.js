@@ -34,6 +34,30 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
     "CLAIM_EVIDENCE_KIND_MISMATCH",
     "EVIDENCE_GLOBAL_LIMIT",
   ]);
+  assert.deepEqual(Object.values(ApplicationBriefMatcherError.CARDINALITY_RULE), [
+    "ROOT_REQUIREMENT_MATCHES_MAX",
+    "ROOT_EMPHASIS_MAX",
+    "ROOT_SUPPORTED_CLAIMS_MAX",
+    "ROOT_CAUTIONS_MAX",
+    "REQUIREMENT_SUPPORTED_FACETS_MAX",
+    "REQUIREMENT_NOT_EVIDENCED_FACETS_MAX",
+    "REQUIREMENT_COMBINED_FACETS_MAX",
+    "REQUIREMENT_UNIQUE_SUPPORTED_EVIDENCE_REFS_MAX",
+    "SUPPORTED_FACET_EVIDENCE_REFS_MIN_ONE",
+    "SUPPORTED_FACET_EVIDENCE_REFS_MAX",
+    "EMPHASIS_OFFER_REFS_MIN_ONE",
+    "EMPHASIS_OFFER_REFS_MAX",
+    "EMPHASIS_EVIDENCE_REFS_MIN_ONE",
+    "EMPHASIS_EVIDENCE_REFS_MAX",
+    "SUPPORTED_CLAIM_OFFER_REFS_MIN_ONE",
+    "SUPPORTED_CLAIM_OFFER_REFS_MAX",
+    "SUPPORTED_CLAIM_EVIDENCE_REFS_MIN_ONE",
+    "SUPPORTED_CLAIM_EVIDENCE_REFS_MAX",
+    "CAUTION_OFFER_REFS_MIN_ONE",
+    "CAUTION_OFFER_REFS_MAX",
+    "CAUTION_EVIDENCE_REFS_MIN_ONE",
+    "CAUTION_EVIDENCE_REFS_MAX",
+  ]);
   assert.deepEqual(Object.values(ApplicationBriefMatcherError.VALIDATION_CATEGORY), [
     "TEXT",
     "IDENTIFIER_ITEM_ID",
@@ -104,4 +128,44 @@ test("matcher error retains only coherent closed structural diagnostics", () => 
     validationCode: "SEMANTIC_VALIDATION",
     validationSubcode: "TEXT_OR_IDENTIFIER_FORMAT",
   });
+});
+
+test("matcher error retains cardinality rules only for cardinality failures", () => {
+  const valid = new ApplicationBriefMatcherError(
+    ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+    ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+    null,
+    {
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "CARDINALITY",
+      cardinalityRule: "ROOT_SUPPORTED_CLAIMS_MAX",
+    },
+  );
+  assert.deepEqual(valid.safeDetails, {
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "CARDINALITY",
+    cardinalityRule: "ROOT_SUPPORTED_CLAIMS_MAX",
+  });
+
+  for (const safeDetails of [{
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "CARDINALITY",
+    cardinalityRule: "private rule",
+  }, {
+    validationCode: "SEMANTIC_VALIDATION",
+    validationSubcode: "ENUM",
+    cardinalityRule: "ROOT_SUPPORTED_CLAIMS_MAX",
+  }, {
+    validationCode: "CONTEXTUAL_VALIDATION",
+    validationSubcode: null,
+    cardinalityRule: "ROOT_SUPPORTED_CLAIMS_MAX",
+  }]) {
+    const error = new ApplicationBriefMatcherError(
+      ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+      ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+      null,
+      safeDetails,
+    );
+    assert.equal(Object.hasOwn(error.safeDetails, "cardinalityRule"), false);
+  }
 });

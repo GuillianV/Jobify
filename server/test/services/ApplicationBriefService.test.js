@@ -220,6 +220,41 @@ test("service logs semantic validation once and neutralizes unsafe details", asy
   }
 });
 
+test("service logs only one recognized cardinality rule", async () => {
+  const cases = [
+    ["ROOT_EMPHASIS_MAX", "ROOT_EMPHASIS_MAX"],
+    ["private cardinality", undefined],
+  ];
+  for (const [cardinalityRule, expectedRule] of cases) {
+    const error = new ApplicationBriefMatcherError(
+      ApplicationBriefMatcherError.CODE.INVALID_OUTPUT,
+      ApplicationBriefMatcherError.REASON.INVALID_SEMANTIC_OUTPUT,
+      null,
+      {
+        validationCode: "SEMANTIC_VALIDATION",
+        validationSubcode: "CARDINALITY",
+        cardinalityRule,
+        actualCount: "private count",
+      },
+    );
+    const harness = createHarness({ builderError: error });
+    await assert.rejects(harness.service.generateForOffer(REQUESTED_OFFER_ID), (caught) => {
+      return caught === error;
+    });
+    const expected = {
+      event: "application_brief_semantic_matcher_invalid_output",
+      validationCode: "SEMANTIC_VALIDATION",
+      validationSubcode: "CARDINALITY",
+    };
+    if (expectedRule !== undefined) {
+      expected.cardinalityRule = expectedRule;
+    }
+    assert.deepEqual(harness.calls.logs.map(JSON.parse), [expected]);
+    assert.deepEqual(harness.calls.sign, []);
+    assert.equal(harness.calls.logs[0].includes("actualCount"), false);
+  }
+});
+
 test("service logs only closed semantic structural localization", async () => {
   const rejectedValue = "private rejected value";
   const expected = new ApplicationBriefMatcherError(
