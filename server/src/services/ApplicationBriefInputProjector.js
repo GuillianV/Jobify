@@ -92,7 +92,10 @@ class ApplicationBriefInputProjector {
    */
   projectCandidateItem(kind, item) {
     const { id, ...facts } = structuredClone(item);
-    return { kind, itemId: id, ...facts };
+    const usableFacts = Object.fromEntries(Object.entries(facts).filter(([, value]) => {
+      return value !== null;
+    }));
+    return { kind, itemId: id, ...usableFacts };
   }
 }
 

@@ -39,7 +39,7 @@ function createDossier() {
     schemaVersion: "candidate-dossier-schema-v1",
     experiences: [{
       id: "experience-1", role: "Role", organization: "Organization", client: null,
-      startDate: "2024-01", endDate: null, current: true, domain: "Domain",
+      startDate: "2024-01", endDate: null, current: false, domain: "Domain",
       activities: ["Second", "First"], achievements: [], technologies: ["React"],
     }],
     projects: [{
@@ -55,7 +55,7 @@ function createDossier() {
       id: "language-1", language: "French", overall: null, reading: null,
       writing: null, speaking: null, listening: null,
     }],
-    softSkills: [{ id: "soft-1", value: "Communication", detail: null }],
+    softSkills: [{ id: "soft-1", value: "Communication", detail: "Collaboration" }],
   });
 }
 
@@ -87,7 +87,7 @@ test("offer projection has the exact minimal matcher shape and stable refs", () 
   }
 });
 
-test("candidate projection preserves six factual collections IDs nulls dates and array order", () => {
+test("candidate projection omits only null scalars and preserves usable evidence", () => {
   const dossier = createDossier();
   const projection = new ApplicationBriefInputProjector().project({
     offerAnalysis: createAnalysis(), offerSnapshot: { title: null }, candidateDossier: dossier,
@@ -98,17 +98,45 @@ test("candidate projection preserves six factual collections IDs nulls dates and
   ]);
   assert.deepEqual(projection.candidate.experiences[0], {
     kind: "EXPERIENCE", itemId: "experience-1", role: "Role",
-    organization: "Organization", client: null, startDate: "2024-01", endDate: null,
-    current: true, domain: "Domain", activities: ["Second", "First"], achievements: [],
+    organization: "Organization", startDate: "2024-01", current: false,
+    domain: "Domain", activities: ["Second", "First"], achievements: [],
     technologies: ["React"],
   });
-  assert.equal(projection.candidate.projects[0].kind, "PROJECT");
-  assert.equal(projection.candidate.skills[0].kind, "SKILL");
-  assert.equal(projection.candidate.education[0].kind, "EDUCATION");
-  assert.equal(projection.candidate.languages[0].kind, "LANGUAGE");
-  assert.equal(projection.candidate.softSkills[0].kind, "SOFT_SKILL");
+  assert.deepEqual(projection.candidate.projects[0], {
+    kind: "PROJECT", itemId: "project-1", name: "Project", summary: "Summary",
+    activities: [], achievements: [], technologies: [],
+  });
+  assert.deepEqual(projection.candidate.skills[0], {
+    kind: "SKILL", itemId: "skill-1", category: "TECHNICAL_SKILL", value: "React",
+  });
+  assert.deepEqual(projection.candidate.education[0], {
+    kind: "EDUCATION", itemId: "education-1", diploma: "Diploma",
+  });
+  assert.deepEqual(projection.candidate.languages[0], {
+    kind: "LANGUAGE", itemId: "language-1", language: "French",
+  });
+  assert.deepEqual(projection.candidate.softSkills[0], {
+    kind: "SOFT_SKILL", itemId: "soft-1", value: "Communication",
+    detail: "Collaboration",
+  });
+  assert.equal(Object.hasOwn(projection.candidate.experiences[0], "client"), false);
+  assert.equal(Object.hasOwn(projection.candidate.experiences[0], "endDate"), false);
+  assert.equal(Object.hasOwn(projection.candidate.skills[0], "detail"), false);
   assert.equal(Object.hasOwn(projection.candidate, "schemaVersion"), false);
   assert.equal(JSON.stringify(projection.candidate).includes("updatedAt"), false);
+});
+
+test("null omission reduces compact JSON without fallback values", () => {
+  const dossier = createDossier();
+  const projection = new ApplicationBriefInputProjector().project({
+    offerAnalysis: createAnalysis(), offerSnapshot: { title: null }, candidateDossier: dossier,
+  });
+  const compactSkill = projection.candidate.skills[0];
+  const expandedSkill = { ...compactSkill, detail: null };
+
+  assert.ok(JSON.stringify(compactSkill).length < JSON.stringify(expandedSkill).length);
+  assert.equal(Object.hasOwn(compactSkill, "detail"), false);
+  assert.equal(compactSkill.value, dossier.skills[0].value);
 });
 
 test("projection is detached and mutation leaves all inputs unchanged", () => {
