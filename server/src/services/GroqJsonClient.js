@@ -1,5 +1,6 @@
 import { GroqConstants } from "../constants/GroqConstants.js";
 import { GroqJsonClientError } from "./GroqJsonClientError.js";
+import { GroqRateLimitMetadata } from "./GroqRateLimitMetadata.js";
 
 const HTTP_STATUS_UNAUTHORIZED = 401;
 const HTTP_STATUS_FORBIDDEN = 403;
@@ -206,16 +207,17 @@ class GroqJsonClient {
       return;
     }
     const status = Number.isInteger(response?.status) ? response.status : null;
+    const rateLimitDetails = GroqRateLimitMetadata.fromHeaders(response?.headers);
     if (status === HTTP_STATUS_RATE_LIMITED) {
       throw new GroqJsonClientError(
         GroqJsonClientError.CODE.RATE_LIMITED,
-        { status },
+        { status, ...rateLimitDetails },
       );
     }
     if (status === HTTP_STATUS_UNAUTHORIZED || status === HTTP_STATUS_FORBIDDEN) {
       throw new GroqJsonClientError(
         GroqJsonClientError.CODE.AUTHENTICATION_ERROR,
-        { status },
+        { status, ...rateLimitDetails },
       );
     }
     const metadata = await this.parseErrorPayload(response);
@@ -223,7 +225,7 @@ class GroqJsonClient {
       if (metadata.tokenBudget !== null) {
         throw new GroqJsonClientError(
           GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED,
-          metadata.tokenBudget,
+          { ...metadata.tokenBudget, ...rateLimitDetails },
         );
       }
     }
@@ -233,6 +235,7 @@ class GroqJsonClient {
         status,
         metadata.providerType,
         metadata.providerCode,
+        rateLimitDetails,
       ),
     );
   }

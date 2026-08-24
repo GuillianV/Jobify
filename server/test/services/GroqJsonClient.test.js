@@ -24,6 +24,33 @@ const TOKEN_REQUESTED = 12047;
 const UNSAFE_PROVIDER_METADATA_LENGTH = 81;
 const UNSAFE_PROVIDER_METADATA_NUMBER = 42;
 const REASONING_EFFORTS = ["low", "medium", "high"];
+const EMPTY_RATE_LIMIT_DETAILS = Object.freeze({
+  rateLimitTokenLimit: null,
+  rateLimitTokenRemaining: null,
+  rateLimitTokenResetMs: null,
+  rateLimitRequestLimit: null,
+  rateLimitRequestRemaining: null,
+  rateLimitRequestResetMs: null,
+  retryAfterMs: null,
+});
+const RATE_LIMIT_HEADERS = Object.freeze({
+  "retry-after": "5",
+  "x-ratelimit-limit-tokens": "8000",
+  "x-ratelimit-remaining-tokens": "2649",
+  "x-ratelimit-reset-tokens": "7.66s",
+  "x-ratelimit-limit-requests": "30",
+  "x-ratelimit-remaining-requests": "29",
+  "x-ratelimit-reset-requests": "2m59.56s",
+});
+const EXPECTED_RATE_LIMIT_DETAILS = Object.freeze({
+  rateLimitTokenLimit: 8000,
+  rateLimitTokenRemaining: 2649,
+  rateLimitTokenResetMs: 7660,
+  rateLimitRequestLimit: 30,
+  rateLimitRequestRemaining: 29,
+  rateLimitRequestResetMs: 179560,
+  retryAfterMs: 5000,
+});
 
 /**
  * Build one successful fetch response containing serialized message JSON.
@@ -46,10 +73,11 @@ function createResponse(value) {
  * @param {unknown} body - Synthetic response payload.
  * @returns {object} Fetch response double.
  */
-function createErrorResponse(status, body) {
+function createErrorResponse(status, body, headers = {}) {
   return {
     ok: false,
     status,
+    headers: typeof headers.get === "function" ? headers : new Headers(headers),
     async json() {
       return structuredClone(body);
     },
@@ -356,8 +384,8 @@ test("HTTP statuses have stable safe classifications", async () => {
     const error = await captureError(client.completeJson(createRequest()));
     assert.equal(error.code, expectedCode);
     const expectedDetails = expectedCode === GroqJsonClientError.CODE.HTTP_ERROR
-      ? { status, providerType: null, providerCode: null }
-      : { status };
+      ? { status, providerType: null, providerCode: null, ...EMPTY_RATE_LIMIT_DETAILS }
+      : { status, ...EMPTY_RATE_LIMIT_DETAILS };
     assert.deepEqual(error.safeDetails, expectedDetails);
   }
 });
@@ -384,6 +412,7 @@ test("generic HTTP errors retain only validated provider identifiers", async () 
     status: HTTP_BAD_REQUEST,
     providerType: "invalid_request_error",
     providerCode: "invalid_json_schema",
+    ...EMPTY_RATE_LIMIT_DETAILS,
   });
   assert.equal(JSON.stringify(error).includes(sensitiveMessage), false);
   assert.equal(Object.hasOwn(error.safeDetails, "message"), false);
@@ -414,6 +443,7 @@ test("generic HTTP errors reject unsafe provider metadata without truncation", a
       status: HTTP_BAD_REQUEST,
       providerType: null,
       providerCode: null,
+      ...EMPTY_RATE_LIMIT_DETAILS,
     });
   }
 });
@@ -443,6 +473,7 @@ test("malformed empty and non-JSON error bodies never mask the HTTP failure", as
       status: HTTP_BAD_REQUEST,
       providerType: null,
       providerCode: null,
+      ...EMPTY_RATE_LIMIT_DETAILS,
     });
     assert.equal(reads, 1);
   }
@@ -468,6 +499,7 @@ test("malformed empty and non-JSON error bodies never mask the HTTP failure", as
       status: HTTP_BAD_REQUEST,
       providerType: null,
       providerCode: null,
+      ...EMPTY_RATE_LIMIT_DETAILS,
     });
     assert.equal(reads, 1);
   }
@@ -509,6 +541,7 @@ test("recognized HTTP 413 token budgets expose only strict safe integers", async
   assert.deepEqual(error.safeDetails, {
     limitTokens: TOKEN_LIMIT,
     requestedTokens: TOKEN_REQUESTED,
+    ...EMPTY_RATE_LIMIT_DETAILS,
   });
   assert.equal(bodyReads, 1);
   const exposable = JSON.stringify({
@@ -548,6 +581,7 @@ test("unrecognized HTTP 413 reads its body once and retains generic behavior", a
     status: HTTP_CONTENT_TOO_LARGE,
     providerType: "invalid_request_error",
     providerCode: "context_limit",
+    ...EMPTY_RATE_LIMIT_DETAILS,
   });
   assert.equal(bodyReads, 1);
 });
@@ -590,6 +624,7 @@ test("unrecognized or incoherent HTTP 413 bodies retain generic HTTP behavior", 
         HTTP_CONTENT_TOO_LARGE,
         body?.error?.type,
         body?.error?.code,
+        EMPTY_RATE_LIMIT_DETAILS,
       ),
     );
   }
@@ -612,7 +647,126 @@ test("unrecognized or incoherent HTTP 413 bodies retain generic HTTP behavior", 
     status: HTTP_CONTENT_TOO_LARGE,
     providerType: null,
     providerCode: null,
+    ...EMPTY_RATE_LIMIT_DETAILS,
   });
+});
+
+test("rate-limit headers are strictly typed for HTTP 429 without retaining other headers", async () => {
+  const forbiddenValues = ["authorization-secret", "cookie-secret", "arbitrary-secret"];
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return createErrorResponse(HTTP_RATE_LIMITED, {}, {
+        ...RATE_LIMIT_HEADERS,
+        authorization: forbiddenValues[0],
+        "set-cookie": forbiddenValues[1],
+        "x-arbitrary-private": forbiddenValues[2],
+      });
+    },
+  });
+
+  const error = await captureError(client.completeJson(createRequest()));
+  assert.equal(error.code, GroqJsonClientError.CODE.RATE_LIMITED);
+  assert.deepEqual(error.safeDetails, {
+    status: HTTP_RATE_LIMITED,
+    ...EXPECTED_RATE_LIMIT_DETAILS,
+  });
+  const serialized = JSON.stringify(error.safeDetails);
+  for (const forbiddenValue of forbiddenValues) {
+    assert.equal(serialized.includes(forbiddenValue), false);
+  }
+  for (const forbiddenField of ["headers", "rawHeaders", "authorization", "set-cookie"]) {
+    assert.equal(Object.hasOwn(error.safeDetails, forbiddenField), false);
+  }
+});
+
+test("malformed integer and duration headers fail closed to null", async () => {
+  const invalidIntegers = [
+    "-1", "1.5", "1e3", " 1", "+1", "NaN", "Infinity", "9007199254740992",
+  ];
+  for (const invalidInteger of invalidIntegers) {
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return createErrorResponse(HTTP_RATE_LIMITED, {}, {
+          get(name) {
+            return name === "x-ratelimit-limit-tokens" ? invalidInteger : null;
+          },
+        });
+      },
+    });
+    const error = await captureError(client.completeJson(createRequest()));
+    assert.equal(error.safeDetails.rateLimitTokenLimit, null);
+  }
+
+  const invalidDurations = [
+    "", "-1s", "1.2345s", "1 second", "1s2m", "1d", "9007199254740992h",
+    "Wed, 21 Oct 2015 07:28:00 GMT",
+  ];
+  for (const invalidDuration of invalidDurations) {
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return createErrorResponse(HTTP_RATE_LIMITED, {}, {
+          "x-ratelimit-reset-tokens": invalidDuration,
+          "retry-after": invalidDuration,
+        });
+      },
+    });
+    const error = await captureError(client.completeJson(createRequest()));
+    assert.equal(error.safeDetails.rateLimitTokenResetMs, null);
+    assert.equal(error.safeDetails.retryAfterMs, null);
+  }
+});
+
+test("recognized HTTP 413 keeps body token metrics separate from rate-limit headers", async () => {
+  const client = new GroqJsonClient({
+    apiKey: API_KEY,
+    fetchImpl: async () => {
+      return createErrorResponse(HTTP_CONTENT_TOO_LARGE, {
+        error: {
+          type: "tokens",
+          code: "rate_limit_exceeded",
+          message: `Limit ${TOKEN_LIMIT}, Requested ${TOKEN_REQUESTED}`,
+        },
+      }, RATE_LIMIT_HEADERS);
+    },
+  });
+
+  const error = await captureError(client.completeJson(createRequest()));
+  assert.equal(error.code, GroqJsonClientError.CODE.TOKEN_BUDGET_EXCEEDED);
+  assert.deepEqual(error.safeDetails, {
+    limitTokens: TOKEN_LIMIT,
+    requestedTokens: TOKEN_REQUESTED,
+    ...EXPECTED_RATE_LIMIT_DETAILS,
+  });
+  assert.notEqual(error.safeDetails.limitTokens, error.safeDetails.rateLimitTokenLimit);
+});
+
+test("HTTP 400 and 5xx retain only typed rate-limit metadata with closed provider IDs", async () => {
+  for (const status of [HTTP_BAD_REQUEST, HTTP_SERVER_ERROR]) {
+    const client = new GroqJsonClient({
+      apiKey: API_KEY,
+      fetchImpl: async () => {
+        return createErrorResponse(status, {
+          error: {
+            type: "invalid_request_error",
+            code: "json_validate_failed",
+            message: "private provider message",
+          },
+        }, RATE_LIMIT_HEADERS);
+      },
+    });
+    const error = await captureError(client.completeJson(createRequest()));
+    assert.equal(error.code, GroqJsonClientError.CODE.HTTP_ERROR);
+    assert.deepEqual(error.safeDetails, {
+      status,
+      providerType: "invalid_request_error",
+      providerCode: "json_validate_failed",
+      ...EXPECTED_RATE_LIMIT_DETAILS,
+    });
+    assert.equal(JSON.stringify(error.safeDetails).includes("private provider message"), false);
+  }
 });
 
 test("invalid envelopes and content are rejected without leaking content", async () => {
