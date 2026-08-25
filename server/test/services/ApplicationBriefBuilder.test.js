@@ -30,6 +30,14 @@ const EXPERIENCE_REF = Object.freeze({
 const REDUCED_MAX_TOKENS = 3000;
 const REQUEST_TOKEN_BUDGET = 9000;
 const GREATER_TOKEN_HEADROOM = 10000;
+const PROMPT_TOKEN_BASIS = REQUEST_TOKEN_BUDGET - REDUCED_MAX_TOKENS;
+const ADAPTIVE_MAX_TOKENS = 2500;
+const ADAPTIVE_TOKEN_REMAINING = PROMPT_TOKEN_BASIS
+  + ApplicationBriefMatcherConstants.TOKEN_BUDGET_SAFETY_MARGIN
+  + ADAPTIVE_MAX_TOKENS;
+const MINIMUM_ADAPTIVE_TOKEN_REMAINING = PROMPT_TOKEN_BASIS
+  + ApplicationBriefMatcherConstants.TOKEN_BUDGET_SAFETY_MARGIN
+  + ApplicationBriefMatcherConstants.MINIMUM_RETRY_OUTPUT_TOKENS;
 const ACTIVE_RETRY_AFTER_MS = 1000;
 const INITIAL_PROVIDER_CALLS = 2;
 const REGENERATED_PHASE_COUNT = 2;
@@ -243,12 +251,15 @@ test("bounded retry repairs incomplete coverage with retained budget and one glo
     return event.decision;
   }), ["ATTEMPTED", "SUCCEEDED"]);
   assert.deepEqual(Object.keys(harness.logs[0]), [
-    "event", "decision", "eligibilityReason", "providerCallCap", "providerCallsMade",
+    "event", "decision", "eligibilityReason", "providerCallCap", "budgetMode",
+    "providerCallsMade",
   ]);
+  assert.equal(harness.logs[0].budgetMode, "FULL");
   const serializedLogs = JSON.stringify(harness.logs);
   for (const forbidden of [
     "successfulRequestTokenBudget", "rateLimitTokenRemaining",
     "rateLimitRequestRemaining", "retryAfterMs", "semanticOutput",
+    "initialMaxTokens", "adaptiveRetryMaxTokens", "promptTokens",
   ]) {
     assert.equal(serializedLogs.includes(forbidden), false);
   }
@@ -283,11 +294,23 @@ test("bounded retry skips every failed proven-headroom gate with one closed reas
   const cases = [
     [{ providerCallsMade: 3 }, "PROVIDER_CALL_CAP_REACHED"],
     [{ successfulRequestTokenBudget: undefined }, "REQUEST_TOKEN_BUDGET_UNAVAILABLE"],
+    [{ successfulRequestTokenBudget: REDUCED_MAX_TOKENS }, "REQUEST_TOKEN_BUDGET_UNAVAILABLE"],
     [{ rateLimitTokenRemaining: undefined }, "TOKEN_REMAINING_UNAVAILABLE"],
-    [{ rateLimitTokenRemaining: REQUEST_TOKEN_BUDGET - 1 }, "TOKEN_HEADROOM_INSUFFICIENT"],
-    [{ rateLimitRequestRemaining: undefined }, "REQUEST_REMAINING_UNAVAILABLE"],
-    [{ rateLimitRequestRemaining: 0 }, "REQUEST_HEADROOM_INSUFFICIENT"],
-    [{ retryAfterMs: ACTIVE_RETRY_AFTER_MS }, "RETRY_AFTER_ACTIVE"],
+    [{
+      rateLimitTokenRemaining: MINIMUM_ADAPTIVE_TOKEN_REMAINING - 1,
+    }, "TOKEN_HEADROOM_BELOW_MINIMUM"],
+    [{
+      rateLimitTokenRemaining: ADAPTIVE_TOKEN_REMAINING,
+      rateLimitRequestRemaining: undefined,
+    }, "REQUEST_REMAINING_UNAVAILABLE"],
+    [{
+      rateLimitTokenRemaining: ADAPTIVE_TOKEN_REMAINING,
+      rateLimitRequestRemaining: 0,
+    }, "REQUEST_HEADROOM_INSUFFICIENT"],
+    [{
+      rateLimitTokenRemaining: ADAPTIVE_TOKEN_REMAINING,
+      retryAfterMs: ACTIVE_RETRY_AFTER_MS,
+    }, "RETRY_AFTER_ACTIVE"],
   ];
   const fixtures = createTwoRequirementFixtures();
   for (const [overrides, skipReason] of cases) {
@@ -305,15 +328,101 @@ test("bounded retry skips every failed proven-headroom gate with one closed reas
         && error.cause.reason === "INCOMPLETE_REQUIREMENT_COVERAGE";
     });
     assert.equal(harness.projections.length, 1);
+    const tokenBudgetReached = ![
+      "PROVIDER_CALL_CAP_REACHED", "REQUEST_TOKEN_BUDGET_UNAVAILABLE",
+      "TOKEN_REMAINING_UNAVAILABLE",
+    ].includes(skipReason);
+    const budgetMode = tokenBudgetReached
+      ? (overrides.rateLimitTokenRemaining === undefined
+        || overrides.rateLimitTokenRemaining >= REQUEST_TOKEN_BUDGET ? "FULL" : "ADAPTIVE")
+      : undefined;
     assert.deepEqual(harness.logs, [{
       event: "application_brief_local_regeneration",
       decision: "SKIPPED",
       eligibilityReason: "INCOMPLETE_REQUIREMENT_COVERAGE",
       providerCallCap: 3,
       skipReason,
+      ...(budgetMode === undefined ? {} : { budgetMode }),
       providerCallsMade: overrides.providerCallsMade ?? INITIAL_PROVIDER_CALLS,
     }]);
   }
+});
+
+test("adaptive retry uses exact remaining capacity without resetting the semantic request", async () => {
+  const fixtures = createTwoRequirementFixtures();
+  const harness = createHarness(createSemanticOutput(), {
+    matcherResults: [{
+      semanticOutput: createSemanticOutput(),
+      providerExecution: createRetryableExecution({
+        rateLimitTokenRemaining: ADAPTIVE_TOKEN_REMAINING,
+      }),
+    }, {
+      semanticOutput: fixtures.semanticOutput,
+      providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
+    }],
+  });
+
+  const brief = await harness.builder.build({
+    offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  });
+
+  assert.equal(harness.projections.length, REGENERATED_PHASE_COUNT);
+  assert.deepEqual(harness.projections[0], harness.projections[1]);
+  assert.equal(harness.sessions[1].initialMaxTokens, ADAPTIVE_MAX_TOKENS);
+  assert.equal(harness.sessions[1].startingProviderCallsMade, INITIAL_PROVIDER_CALLS);
+  assert.deepEqual(harness.logs.map((event) => {
+    return [event.decision, event.budgetMode];
+  }), [["ATTEMPTED", "ADAPTIVE"], ["SUCCEEDED", "ADAPTIVE"]]);
+  assert.equal(JSON.stringify(brief).includes("budgetMode"), false);
+});
+
+test("adaptive retry accepts the exact shared minimum completion budget", async () => {
+  const fixtures = createTwoRequirementFixtures();
+  const harness = createHarness(createSemanticOutput(), {
+    matcherResults: [{
+      semanticOutput: createSemanticOutput(),
+      providerExecution: createRetryableExecution({
+        rateLimitTokenRemaining: MINIMUM_ADAPTIVE_TOKEN_REMAINING,
+      }),
+    }, {
+      semanticOutput: fixtures.semanticOutput,
+      providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
+    }],
+  });
+
+  await harness.builder.build({
+    offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  });
+
+  assert.equal(
+    harness.sessions[1].initialMaxTokens,
+    ApplicationBriefMatcherConstants.MINIMUM_RETRY_OUTPUT_TOKENS,
+  );
+  assert.equal(harness.logs[0].budgetMode, "ADAPTIVE");
+});
+
+test("adaptive retry rejects non-positive completion capacity without a provider call", async () => {
+  const fixtures = createTwoRequirementFixtures();
+  const harness = createHarness(createSemanticOutput(), {
+    matcherResults: [{
+      semanticOutput: createSemanticOutput(),
+      providerExecution: createRetryableExecution({
+        rateLimitTokenRemaining: PROMPT_TOKEN_BASIS
+          + ApplicationBriefMatcherConstants.TOKEN_BUDGET_SAFETY_MARGIN,
+      }),
+    }],
+  });
+
+  await assert.rejects(harness.builder.build({
+    offerAnalysis: fixtures.analysis, offerSnapshot: {}, offerIdentity: OFFER_IDENTITY,
+    candidateDossier: createDossier(),
+  }));
+
+  assert.equal(harness.projections.length, 1);
+  assert.equal(harness.logs[0].skipReason, "TOKEN_HEADROOM_BELOW_MINIMUM");
+  assert.equal(harness.logs[0].budgetMode, "ADAPTIVE");
 });
 
 test("equal greater and zero-delay headroom permit exactly one regeneration", async () => {
@@ -346,7 +455,9 @@ test("a second local failure is terminal and never schedules another regeneratio
   const harness = createHarness(invalidFacet, {
     matcherResults: [{
       semanticOutput: invalidFacet,
-      providerExecution: createRetryableExecution(),
+      providerExecution: createRetryableExecution({
+        rateLimitTokenRemaining: ADAPTIVE_TOKEN_REMAINING,
+      }),
     }, {
       semanticOutput: invalidFacet,
       providerExecution: createRetryableExecution({ providerCallsMade: 3 }),
@@ -361,6 +472,7 @@ test("a second local failure is terminal and never schedules another regeneratio
   });
   assert.equal(harness.projections.length, REGENERATED_PHASE_COUNT);
   assert.equal(harness.logs.at(-1).decision, "FAILED_LOCAL");
+  assert.equal(harness.logs.at(-1).budgetMode, "ADAPTIVE");
 });
 
 test("a local regeneration provider rate limit remains terminal", async () => {

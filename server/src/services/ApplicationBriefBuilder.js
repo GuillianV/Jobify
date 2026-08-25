@@ -21,10 +21,14 @@ const LOCAL_REGENERATION_SKIP_REASON = Object.freeze({
   PROVIDER_CALL_CAP_REACHED: "PROVIDER_CALL_CAP_REACHED",
   REQUEST_TOKEN_BUDGET_UNAVAILABLE: "REQUEST_TOKEN_BUDGET_UNAVAILABLE",
   TOKEN_REMAINING_UNAVAILABLE: "TOKEN_REMAINING_UNAVAILABLE",
-  TOKEN_HEADROOM_INSUFFICIENT: "TOKEN_HEADROOM_INSUFFICIENT",
+  TOKEN_HEADROOM_BELOW_MINIMUM: "TOKEN_HEADROOM_BELOW_MINIMUM",
   REQUEST_REMAINING_UNAVAILABLE: "REQUEST_REMAINING_UNAVAILABLE",
   REQUEST_HEADROOM_INSUFFICIENT: "REQUEST_HEADROOM_INSUFFICIENT",
   RETRY_AFTER_ACTIVE: "RETRY_AFTER_ACTIVE",
+});
+const LOCAL_REGENERATION_BUDGET_MODE = Object.freeze({
+  FULL: "FULL",
+  ADAPTIVE: "ADAPTIVE",
 });
 const LOCAL_REGENERATION_REASONS = Object.freeze([
   ApplicationBriefContextValidationError.REASON.FACET_NOT_IN_REQUIREMENT,
@@ -108,12 +112,15 @@ class ApplicationBriefBuilder {
    */
   async regenerateContextualOutput(inputs) {
     const constants = ApplicationBriefMatcherConstants;
-    const skipReason = this.getLocalRegenerationSkipReason(inputs.providerExecution);
-    if (skipReason !== null) {
+    const executionPlan = this.createLocalRegenerationExecutionPlan(
+      inputs.providerExecution,
+    );
+    if (!executionPlan.allowed) {
       this.logLocalRegeneration({
         decision: LOCAL_REGENERATION_DECISION.SKIPPED,
         eligibilityReason: inputs.eligibilityReason,
-        skipReason,
+        skipReason: executionPlan.skipReason,
+        budgetMode: executionPlan.budgetMode,
         providerCallsMade: inputs.providerExecution?.providerCallsMade,
       });
       throw this.mapContextValidationError(inputs.originalError);
@@ -121,6 +128,7 @@ class ApplicationBriefBuilder {
     this.logLocalRegeneration({
       decision: LOCAL_REGENERATION_DECISION.ATTEMPTED,
       eligibilityReason: inputs.eligibilityReason,
+      budgetMode: executionPlan.budgetMode,
       providerCallsMade: inputs.providerExecution.providerCallsMade,
     });
     let matcherResult;
@@ -128,7 +136,7 @@ class ApplicationBriefBuilder {
       matcherResult = await this.semanticMatcher.matchWithExecution(inputs.projection, {
         startingProviderCallsMade: inputs.providerExecution.providerCallsMade,
         providerCallCap: constants.ABSOLUTE_PROVIDER_CALL_CAP,
-        initialMaxTokens: inputs.providerExecution.successfulMaxTokens,
+        initialMaxTokens: executionPlan.initialMaxTokens,
       });
     } catch (error) {
       const localFailure = error instanceof ApplicationBriefMatcherError
@@ -138,6 +146,7 @@ class ApplicationBriefBuilder {
           ? LOCAL_REGENERATION_DECISION.FAILED_LOCAL
           : LOCAL_REGENERATION_DECISION.FAILED_PROVIDER,
         eligibilityReason: inputs.eligibilityReason,
+        budgetMode: executionPlan.budgetMode,
         providerClassification: !localFailure && error instanceof ApplicationBriefMatcherError
           ? error.code
           : undefined,
@@ -152,6 +161,7 @@ class ApplicationBriefBuilder {
       this.logLocalRegeneration({
         decision: LOCAL_REGENERATION_DECISION.SUCCEEDED,
         eligibilityReason: inputs.eligibilityReason,
+        budgetMode: executionPlan.budgetMode,
         providerCallsMade: matcherResult.providerExecution.providerCallsMade,
       });
       return brief;
@@ -159,6 +169,7 @@ class ApplicationBriefBuilder {
       this.logLocalRegeneration({
         decision: LOCAL_REGENERATION_DECISION.FAILED_LOCAL,
         eligibilityReason: inputs.eligibilityReason,
+        budgetMode: executionPlan.budgetMode,
         providerCallsMade: matcherResult.providerExecution.providerCallsMade,
       });
       throw this.mapContextValidationError(error);
@@ -177,43 +188,94 @@ class ApplicationBriefBuilder {
   }
 
   /**
-   * Evaluate the closed proven-headroom gate without estimating missing metadata.
+   * Build one fail-closed local-regeneration execution plan from exact retained metadata.
    * @param {object} providerExecution - First successful matcher execution metadata.
-   * @returns {string|null} Closed skip reason or null when every gate passes.
+   * @returns {object} Closed skip or bounded continuation plan.
    */
-  getLocalRegenerationSkipReason(providerExecution) {
+  createLocalRegenerationExecutionPlan(providerExecution) {
     const constants = ApplicationBriefMatcherConstants;
     if (!Number.isSafeInteger(providerExecution?.providerCallsMade)
       || providerExecution.providerCallsMade < 0
       || providerExecution.providerCallsMade >= constants.ABSOLUTE_PROVIDER_CALL_CAP) {
-      return LOCAL_REGENERATION_SKIP_REASON.PROVIDER_CALL_CAP_REACHED;
+      return this.createSkippedExecutionPlan(
+        LOCAL_REGENERATION_SKIP_REASON.PROVIDER_CALL_CAP_REACHED,
+      );
     }
     if (!Number.isSafeInteger(providerExecution.successfulMaxTokens)
       || providerExecution.successfulMaxTokens <= 0
       || !Number.isSafeInteger(providerExecution.successfulRequestTokenBudget)
-      || providerExecution.successfulRequestTokenBudget <= 0) {
-      return LOCAL_REGENERATION_SKIP_REASON.REQUEST_TOKEN_BUDGET_UNAVAILABLE;
+      || providerExecution.successfulRequestTokenBudget
+        <= providerExecution.successfulMaxTokens) {
+      return this.createSkippedExecutionPlan(
+        LOCAL_REGENERATION_SKIP_REASON.REQUEST_TOKEN_BUDGET_UNAVAILABLE,
+      );
     }
     if (!Number.isSafeInteger(providerExecution.rateLimitTokenRemaining)
       || providerExecution.rateLimitTokenRemaining < 0) {
-      return LOCAL_REGENERATION_SKIP_REASON.TOKEN_REMAINING_UNAVAILABLE;
+      return this.createSkippedExecutionPlan(
+        LOCAL_REGENERATION_SKIP_REASON.TOKEN_REMAINING_UNAVAILABLE,
+      );
     }
+    let budgetMode = LOCAL_REGENERATION_BUDGET_MODE.FULL;
+    let initialMaxTokens = providerExecution.successfulMaxTokens;
     if (providerExecution.rateLimitTokenRemaining
       < providerExecution.successfulRequestTokenBudget) {
-      return LOCAL_REGENERATION_SKIP_REASON.TOKEN_HEADROOM_INSUFFICIENT;
+      budgetMode = LOCAL_REGENERATION_BUDGET_MODE.ADAPTIVE;
+      const promptTokens = providerExecution.successfulRequestTokenBudget
+        - providerExecution.successfulMaxTokens;
+      const availableCompletionBudget = providerExecution.rateLimitTokenRemaining
+        - promptTokens
+        - constants.TOKEN_BUDGET_SAFETY_MARGIN;
+      initialMaxTokens = Math.min(
+        providerExecution.successfulMaxTokens,
+        availableCompletionBudget,
+      );
+      if (!Number.isSafeInteger(promptTokens)
+        || promptTokens <= 0
+        || !Number.isSafeInteger(availableCompletionBudget)
+        || !Number.isSafeInteger(initialMaxTokens)
+        || initialMaxTokens < constants.MINIMUM_RETRY_OUTPUT_TOKENS) {
+        return this.createSkippedExecutionPlan(
+          LOCAL_REGENERATION_SKIP_REASON.TOKEN_HEADROOM_BELOW_MINIMUM,
+          budgetMode,
+        );
+      }
     }
     if (!Number.isSafeInteger(providerExecution.rateLimitRequestRemaining)
       || providerExecution.rateLimitRequestRemaining < 0) {
-      return LOCAL_REGENERATION_SKIP_REASON.REQUEST_REMAINING_UNAVAILABLE;
+      return this.createSkippedExecutionPlan(
+        LOCAL_REGENERATION_SKIP_REASON.REQUEST_REMAINING_UNAVAILABLE,
+        budgetMode,
+      );
     }
     if (providerExecution.rateLimitRequestRemaining < 1) {
-      return LOCAL_REGENERATION_SKIP_REASON.REQUEST_HEADROOM_INSUFFICIENT;
+      return this.createSkippedExecutionPlan(
+        LOCAL_REGENERATION_SKIP_REASON.REQUEST_HEADROOM_INSUFFICIENT,
+        budgetMode,
+      );
     }
     if (providerExecution.retryAfterMs !== undefined
       && providerExecution.retryAfterMs !== 0) {
-      return LOCAL_REGENERATION_SKIP_REASON.RETRY_AFTER_ACTIVE;
+      return this.createSkippedExecutionPlan(
+        LOCAL_REGENERATION_SKIP_REASON.RETRY_AFTER_ACTIVE,
+        budgetMode,
+      );
     }
-    return null;
+    return Object.freeze({ allowed: true, budgetMode, initialMaxTokens });
+  }
+
+  /**
+   * Build one immutable denied local-regeneration execution plan.
+   * @param {string} skipReason - Closed first failed gate.
+   * @param {string} [budgetMode] - Closed budget mode when already determined.
+   * @returns {object} Immutable denied plan.
+   */
+  createSkippedExecutionPlan(skipReason, budgetMode) {
+    return Object.freeze({
+      allowed: false,
+      skipReason,
+      ...(budgetMode === undefined ? {} : { budgetMode }),
+    });
   }
 
   /**
@@ -231,6 +293,9 @@ class ApplicationBriefBuilder {
       };
       if (details.skipReason !== undefined) {
         event.skipReason = details.skipReason;
+      }
+      if (Object.values(LOCAL_REGENERATION_BUDGET_MODE).includes(details.budgetMode)) {
+        event.budgetMode = details.budgetMode;
       }
       if (Number.isSafeInteger(details.providerCallsMade)
         && details.providerCallsMade >= 0) {
