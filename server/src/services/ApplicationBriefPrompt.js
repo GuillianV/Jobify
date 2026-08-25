@@ -96,7 +96,7 @@ class ApplicationBriefPrompt {
       "SOFT_SKILL=value|detail",
       "Scalaire: copie exactement la propriété projetée; ne renomme, traduis, reformule, infère ni n'emploie d'alias.",
       "Indexé, EXPERIENCE/PROJECT seulement: activities[i]|achievements[i]|technologies[i]; i est l'index zéro-based d'un élément projeté existant; le nom d'array nu est interdit.",
-      "Copie exactement kind et itemId. Référence seulement une valeur projetée existante non null; sinon, n'invente/substitue aucun field et ne crée ni evidenceRef ni claim.",
+      "Copie exactement kind et itemId ensemble depuis le même élément de preuve projeté; ne combine jamais le kind d'un élément avec l'itemId d'un autre élément ou d'un autre kind. Référence seulement une valeur projetée existante non null; sinon, n'invente/substitue aucun field et ne crée ni evidenceRef ni claim.",
     ].join("\n");
     const emphasisAndCautions = [
       "EMPHASIS AND CAUTIONS",

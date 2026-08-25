@@ -114,6 +114,14 @@ test("prompt makes EvidenceRef fields kind-specific and requires existing eviden
   assert.equal(system.includes("répare un alias"), false);
 });
 
+test("prompt binds EvidenceRef kind and itemId to the same projected evidence item", () => {
+  const system = new ApplicationBriefPrompt().systemPrompt;
+
+  assert.equal(system.includes("kind et itemId ensemble"), true);
+  assert.equal(system.includes("même élément de preuve projeté"), true);
+  assert.equal(system.includes("itemId d'un autre élément ou d'un autre kind"), true);
+});
+
 test("prompt field contract preserves claim semantics and hides validator internals", () => {
   const system = new ApplicationBriefPrompt().systemPrompt;
 
