@@ -257,6 +257,8 @@ test("service logs only one recognized cardinality rule", async () => {
 
 test("service logs only one recognized nested-shape rule", async () => {
   const cases = [
+    ["REQUIREMENT_MATCH_OBJECT_SHAPE", "REQUIREMENT_MATCH_OBJECT_SHAPE"],
+    ["REQUIREMENT_MATCH_EXACT_KEYS", "REQUIREMENT_MATCH_EXACT_KEYS"],
     ["SUPPORTED_CLAIM_SHAPE", "SUPPORTED_CLAIM_SHAPE"],
     ["private nested shape", undefined],
   ];

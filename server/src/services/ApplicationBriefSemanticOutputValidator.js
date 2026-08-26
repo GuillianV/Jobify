@@ -123,7 +123,8 @@ class ApplicationBriefSemanticOutputValidator {
         match,
         REQUIREMENT_MATCH_KEYS,
         SUBCODE.NESTED_SHAPE_OR_KEYS,
-        NESTED_SHAPE_RULE.REQUIREMENT_MATCH_SHAPE,
+        NESTED_SHAPE_RULE.REQUIREMENT_MATCH_OBJECT_SHAPE,
+        NESTED_SHAPE_RULE.REQUIREMENT_MATCH_EXACT_KEYS,
       );
       this.validateOfferRef(match.offerRef, ApplicationBriefConstants.OFFER_REF_KIND.REQUIREMENT);
       if (indices.has(match.offerRef.index)) {
@@ -604,6 +605,7 @@ class ApplicationBriefSemanticOutputValidator {
    * @param {string[]} expectedKeys - Exact required keys.
    * @param {string} [subcode] - Closed shape category.
    * @param {string} [nestedShapeRule] - Closed nested-shape predicate.
+   * @param {string} [exactKeysNestedShapeRule] - Closed exact-key predicate.
    * @returns {void}
    */
   requireExactObject(
@@ -611,16 +613,31 @@ class ApplicationBriefSemanticOutputValidator {
     expectedKeys,
     subcode = SUBCODE.NESTED_SHAPE_OR_KEYS,
     nestedShapeRule,
+    exactKeysNestedShapeRule = nestedShapeRule,
   ) {
     if (value === null || typeof value !== "object" || Array.isArray(value)
       || Object.getPrototypeOf(value) !== Object.prototype) {
-      this.fail(subcode, undefined, undefined, undefined, undefined, nestedShapeRule);
+      this.fail(
+        subcode,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        nestedShapeRule,
+      );
     }
     const keys = Object.keys(value);
     if (keys.length !== expectedKeys.length || keys.some((key) => {
       return !expectedKeys.includes(key);
     })) {
-      this.fail(subcode, undefined, undefined, undefined, undefined, nestedShapeRule);
+      this.fail(
+        subcode,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        exactKeysNestedShapeRule,
+      );
     }
   }
 

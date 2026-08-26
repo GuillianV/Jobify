@@ -59,7 +59,8 @@ test("matcher error exposes only stable safe codes and the consumed semantic rea
     "CAUTION_EVIDENCE_REFS_MAX",
   ]);
   assert.deepEqual(Object.values(ApplicationBriefMatcherError.NESTED_SHAPE_RULE), [
-    "REQUIREMENT_MATCH_SHAPE",
+    "REQUIREMENT_MATCH_OBJECT_SHAPE",
+    "REQUIREMENT_MATCH_EXACT_KEYS",
     "SUPPORTED_FACET_SHAPE",
     "NOT_EVIDENCED_FACET_SHAPE",
     "EMPHASIS_SHAPE",

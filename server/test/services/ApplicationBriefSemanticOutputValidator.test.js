@@ -155,6 +155,35 @@ test("all three match states are valid only with their exact facet matrix", () =
   }
 });
 
+test("requirement match container failures use content-free closed subrules", () => {
+  const objectShapeCandidates = [null, [], "invalid", 1, true];
+  for (const candidate of objectShapeCandidates) {
+    const output = createEmptyOutput();
+    output.requirementMatches = [candidate];
+    expectInvalid(() => {
+      new ApplicationBriefSemanticOutputValidator().validate(output);
+    }, "NESTED_SHAPE_OR_KEYS", {
+      nestedShapeRule: "REQUIREMENT_MATCH_OBJECT_SHAPE",
+    });
+  }
+
+  const missingKey = createMatch("SUPPORTED");
+  delete missingKey.state;
+  const extraKey = { ...createMatch("SUPPORTED"), unknown: true };
+  const replacedKey = createMatch("SUPPORTED");
+  delete replacedKey.state;
+  replacedKey.unknown = "SUPPORTED";
+  for (const candidate of [missingKey, extraKey, replacedKey]) {
+    const output = createEmptyOutput();
+    output.requirementMatches = [candidate];
+    expectInvalid(() => {
+      new ApplicationBriefSemanticOutputValidator().validate(output);
+    }, "NESTED_SHAPE_OR_KEYS", {
+      nestedShapeRule: "REQUIREMENT_MATCH_EXACT_KEYS",
+    });
+  }
+});
+
 test("match refs facets duplicates overlap and unknown keys fail structurally", () => {
   const variants = [];
   const wrongKind = createMatch("SUPPORTED");
@@ -793,7 +822,10 @@ test("every cardinality predicate emits its exact closed rule", () => {
 
 test("every nested-shape predicate emits its exact closed rule", () => {
   const cases = [
-    ["REQUIREMENT_MATCH_SHAPE", (output) => {
+    ["REQUIREMENT_MATCH_OBJECT_SHAPE", (output) => {
+      output.requirementMatches = [null];
+    }],
+    ["REQUIREMENT_MATCH_EXACT_KEYS", (output) => {
       output.requirementMatches = [{ ...createMatch("SUPPORTED"), unknown: true }];
     }],
     ["SUPPORTED_FACET_SHAPE", (output) => {
